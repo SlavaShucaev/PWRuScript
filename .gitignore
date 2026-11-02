@@ -1,0 +1,14 @@
+# CMake и бинарник
+build/
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+pwru_script
+# Qt
+scr/.qtcreator/project.json
+scr/.qtcreator/project.json.user
+# Скрипт запуска компиляции
+compile.sh
+res/
+*.pak
