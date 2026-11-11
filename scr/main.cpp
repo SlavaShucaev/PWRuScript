@@ -3,6 +3,7 @@
 #include "utils.h"
 
 #include <curl/curl.h>
+
 #include <exception>
 #include <iostream>
 #include <string>
@@ -10,8 +11,6 @@
 namespace fs = std::filesystem;
 
 int main() {
-    // Глобальная инициализация libcurl (обязательно для многопоточных
-    // приложений; в однопоточном не помешает).
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     const std::string exe_file_name = "ProjectWingman-Win64-Shipping";
@@ -45,15 +44,12 @@ int main() {
     }
     utils::Print("Игра сейчас не запущена.", utils::Status::Success);
 
-    // contentDir_ = <...>/Project Wingman/ProjectWingman
     Installer installer(gamePath / "ProjectWingman",
                         "PW_RU_Voice.pak",
                         "PW_RU_Subs.pak");
 
-    // Показываем, что уже установлено
     installer.CheckExistingInstallation(/*needPause=*/true);
 
-    // Скачиваем и ставим
     const bool ok = installer.DownloadAndInstallAll();
 
     curl_global_cleanup();

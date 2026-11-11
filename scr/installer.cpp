@@ -4,7 +4,9 @@
 #include <curl/curl.h>
 
 #include <cstdio>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -18,8 +20,68 @@ size_t WriteFileCallback(void* ptr, size_t size, size_t nmemb, void* userdata) {
     return std::fwrite(ptr, size, nmemb, fp);
 }
 
-// Прямая ссылка на asset последнего релиза.
-// GitHub сам редиректит на CDN — включаем FOLLOWLOCATION.
+// Человекочитаемый размер: "1.2 MiB", "512 KiB", "300 B"
+std::string HumanSize(curl_off_t bytes) {
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(1);
+    if (bytes >= 1024LL * 1024 * 1024) {
+        os << (double)bytes / (1024.0 * 1024.0 * 1024.0) << " GiB";
+    } else if (bytes >= 1024LL * 1024) {
+        os << (double)bytes / (1024.0 * 1024.0) << " MiB";
+    } else if (bytes >= 1024LL) {
+        os << (double)bytes / 1024.0 << " KiB";
+    } else {
+        os << (long long)bytes << " B";
+    }
+    return os.str();
+}
+
+// Рисует строку прогресса в stderr через \r.
+void DrawProgress(const std::string& label,
+                  curl_off_t dltotal, curl_off_t dlnow) {
+    std::ostringstream os;
+    os << "\r  [" << label << "] ";
+
+    if (dltotal > 0) {
+        const int width = 30;
+        double ratio = (double)dlnow / (double)dltotal;
+        if (ratio > 1.0) ratio = 1.0;
+
+        int filled = (int)(ratio * width);
+        os << '[';
+        for (int i = 0; i < width; ++i) {
+            os << (i < filled ? '#' : '-');
+        }
+        os << "] "
+           << std::setw(3) << (int)(ratio * 100.0) << "%  "
+           << HumanSize(dlnow) << " / " << HumanSize(dltotal);
+    } else {
+        os << HumanSize(dlnow) << " (размер неизвестен)";
+    }
+
+    // Дополняем пробелами, чтобы затереть «хвост» от предыдущей строки
+    std::string s = os.str();
+    if (s.size() < 100) s.append(100 - s.size(), ' ');
+
+    std::cerr << s << std::flush;
+}
+
+// Стирает строку прогресса
+void ClearProgress() {
+    std::cerr << '\r' << std::string(100, ' ') << '\r' << std::flush;
+}
+
+// callback прогресса для CURLOPT_XFERINFOFUNCTION
+int ProgressCallback(void* clientp,
+                     curl_off_t dltotal,
+                     curl_off_t dlnow,
+                     curl_off_t /*ultotal*/,
+                     curl_off_t /*ulnow*/) {
+    const std::string* label = static_cast<const std::string*>(clientp);
+    DrawProgress(label ? *label : std::string("Загрузка"), dltotal, dlnow);
+    return 0; // 0 — продолжать, non-zero — прервать
+}
+
 constexpr const char* kGithubReleaseBase =
     "https://github.com/RikudoSmpai/PWRuLauncher/releases/latest/download/";
 
@@ -64,18 +126,13 @@ bool Installer::CheckDirectory(const fs::path& p) const {
 }
 
 bool Installer::CheckExistingInstallation(bool needPause) const {
-    // contentDir_ — это корень папки ProjectWingman,
-    // т.е. <...>/Project Wingman/ProjectWingman
     const fs::path paksMods = contentDir_ / "Content" / "Paks" / "~mods";
     const fs::path binWin64 = contentDir_ / "Binaries" / "Win64";
 
     bool found = false;
 
-    // ---- Локализация ----
     found |= CheckFile(paksMods / "PW_RU_Voice.pak");
     found |= CheckFile(paksMods / "PW_RU_Subs.pak");
-
-    // ---- UE4SS ----
     found |= CheckFile(binWin64 / "dwmapi.dll");
     found |= CheckFile(binWin64 / "UE4SS.dll");
     found |= CheckFile(binWin64 / "UE4SS-settings.ini");
@@ -152,11 +209,12 @@ void Installer::InstallPak(
 }
 
 // ---------------------------------------------------------------
-// Скачивание с GitHub
+// Скачивание с GitHub (с прогресс-баром)
 // ---------------------------------------------------------------
 
 bool Installer::DownloadFile(const std::string& url,
-                             const fs::path& destFile) const {
+                             const fs::path& destFile,
+                             const std::string& label) const {
     CURL* curl = curl_easy_init();
     if (!curl) {
         utils::Print("Не удалось инициализировать libcurl.",
@@ -177,11 +235,13 @@ bool Installer::DownloadFile(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
     // GitHub Releases всегда редиректит на CDN — обязательно!
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    // Таймауты, чтобы не зависало навсегда
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
-    // User-Agent — некоторые серверы отказывают без него
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "PWRuLauncher-installer/1.0");
+    // Прогресс
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ProgressCallback);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &label);
 
     CURLcode res = curl_easy_perform(curl);
 
@@ -190,6 +250,9 @@ bool Installer::DownloadFile(const std::string& url,
 
     curl_easy_cleanup(curl);
     std::fclose(fp);
+
+    // Стираем строку прогресса перед любыми сообщениями
+    ClearProgress();
 
     // --- разбор ошибок ---
     if (res != CURLE_OK) {
@@ -220,7 +283,6 @@ bool Installer::DownloadFile(const std::string& url,
         return false;
     }
 
-    // Проверяем, что файл реально непустой
     std::error_code ec;
     auto sz = fs::file_size(destFile, ec);
     if (ec || sz == 0) {
@@ -231,8 +293,8 @@ bool Installer::DownloadFile(const std::string& url,
         return false;
     }
 
-    utils::Print("Скачано: " + destFile.filename().string() +
-                     " (" + std::to_string(sz) + " байт)",
+    utils::Print("Скачано [" + label + "]: " + destFile.filename().string() +
+                     " (" + HumanSize((curl_off_t)sz) + ")",
                  utils::Status::Success);
     return true;
 }
@@ -241,8 +303,6 @@ bool Installer::DownloadAndInstallAll() const {
     utils::Print("Скачивание файлов локализации с GitHub...",
                  utils::Status::Info);
 
-    // Куда кладём файлы — сразу в целевую папку ~mods,
-    // но под временными именами *.download
     const fs::path paksMods = contentDir_ / "Content" / "Paks" / "~mods";
     std::error_code ec;
     fs::create_directories(paksMods, ec);
@@ -258,7 +318,7 @@ bool Installer::DownloadAndInstallAll() const {
     // ---- Скачиваем озвучку ----
     const std::string voiceUrl =
         std::string(kGithubReleaseBase) + "PW_RU_Voice.pak";
-    if (!DownloadFile(voiceUrl, tmpVoice)) {
+    if (!DownloadFile(voiceUrl, tmpVoice, "Озвучка")) {
         utils::Print("Не удалось скачать файл озвучки.",
                      utils::Status::Error);
         return false;
@@ -267,7 +327,7 @@ bool Installer::DownloadAndInstallAll() const {
     // ---- Скачиваем субтитры ----
     const std::string subsUrl =
         std::string(kGithubReleaseBase) + "PW_RU_Subs.pak";
-    if (!DownloadFile(subsUrl, tmpSubs)) {
+    if (!DownloadFile(subsUrl, tmpSubs, "Субтитры")) {
         utils::Print("Не удалось скачать файл субтитров.",
                      utils::Status::Error);
         std::error_code ignore;
@@ -275,7 +335,7 @@ bool Installer::DownloadAndInstallAll() const {
         return false;
     }
 
-    // ---- Устанавливаем (переименовываем в целевые имена) ----
+    // ---- Устанавливаем ----
     const fs::path finalVoice = paksMods / "PW_RU_Voice.pak";
     const fs::path finalSubs  = paksMods / "PW_RU_Subs.pak";
 
