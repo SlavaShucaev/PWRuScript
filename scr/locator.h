@@ -1,22 +1,27 @@
 #pragma once
 
+#include <filesystem>
 #include <string>
+#include <vector>
 
-namespace fs = std::filesystem;
+class Locator {
+public:
+    Locator();
 
-class Locator{
-    public:
-    Locator(){
-        const char* env_p = std::getenv("HOME");
-        homeDir_ = (env_p);
-    }
+    // Возвращает путь к игре или пустой path, если не найдено.
+    std::filesystem::path GetGamePath();
 
-    fs::path GetGamePath();
-    bool IsValidDirecoty(const std::string& targetDir);
-    bool IsValidFile(const std::string& targetFile);
+    // Позволяет пользователю вручную ввести путь, повторяет запрос
+    // пока не получит валидную директорию (или пустую строку для отказа).
+    std::filesystem::path AskUserForGamePath();
 
-    private:
-    fs::path LocateSteamPath();
-    fs::path homeDir_;
+    static bool IsValidDirectory(const std::string& targetDir);
+    static bool IsValidFile(const std::string& targetFile);
 
+private:
+    std::vector<std::filesystem::path> CandidateSteamPaths() const;
+    std::vector<std::filesystem::path> ReadSteamLibraries(
+        const std::filesystem::path& steamRoot) const;
+
+    std::filesystem::path homeDir_;
 };

@@ -3,35 +3,41 @@
 #include "utils.h"
 
 #include <exception>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <string>
-#include <cstdlib>
 
 namespace fs = std::filesystem;
 
 int main() {
-    const std::string exe_file_name_ = "ProjectWingman-Win64-Shipping";
+    const std::string exe_file_name = "ProjectWingman-Win64-Shipping";
 
-    Locator locator = Locator();
-    fs::path path = locator.GetGamePath();
-    if(path.empty()){
-        utils::Print("Неудалось автоматически найти Project Wingman",
+    Locator locator;
+    fs::path gamePath = locator.GetGamePath();
+
+    if (gamePath.empty()) {
+        utils::Print("Не удалось автоматически найти Project Wingman.",
                      utils::Status::Warning);
-    }else{
-    utils::Print("Путь к Project Wingman :",
-                 utils::Status::Info);
-    utils::Print(path);
+        gamePath = locator.AskUserForGamePath();
+        if (gamePath.empty()) {
+            utils::Print("Путь не указан. Установка отменена.",
+                         utils::Status::Error);
+            return 1;
+        }
     }
-    //Проверка, запушен ли игра
-    //Если игра запущена, то ждем когда она закроется
-    //Либо закрывем скрипт, по усмотрению пользователя
-    if(utils::IsProcessRunning(exe_file_name_)){
-        utils::Print("Игра сейчас запущена!\nУстановка локализации приостановлена\nПожайлуста закройте игру",
-                     utils::Status::Warning);
-    }else{
-        utils::Print("Игра сейчас не запущена.",
-                     utils::Status::Success);
+
+    utils::Print("Путь к Project Wingman:", utils::Status::Info);
+    utils::Print(gamePath.string());
+
+    if (utils::IsProcessRunning(exe_file_name)) {
+        utils::Print(
+            "Игра сейчас запущена!\n"
+            "Установка локализации приостановлена.\n"
+            "Пожалуйста, закройте игру.",
+            utils::Status::Warning);
+        // Здесь можно опционально дождаться завершения процесса.
+    } else {
+        utils::Print("Игра сейчас не запущена.", utils::Status::Success);
     }
 
     return 0;
