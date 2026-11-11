@@ -3,7 +3,6 @@
 #include "utils.h"
 
 #include <exception>
-#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -35,10 +34,29 @@ int main() {
             "Установка локализации приостановлена.\n"
             "Пожалуйста, закройте игру.",
             utils::Status::Warning);
-        // Здесь можно опционально дождаться завершения процесса.
-    } else {
-        utils::Print("Игра сейчас не запущена.", utils::Status::Success);
+        return 1;
     }
+    utils::Print("Игра сейчас не запущена.", utils::Status::Success);
+
+    // Пути к исходным .pak — задаются вызывающей стороной.
+    const fs::path voicePak    = "PW_RU_Voice.pak";
+    const fs::path subtitlePak = "PW_RU_Subs.pak";
+
+    Installer installer(gamePath / "ProjectWingman", voicePak, subtitlePak);
+
+    // 1) Проверяем, что уже установлено. При находках — предупреждаем
+    //    и ждём Enter.
+    installer.CheckExistingInstallation(/*needPause=*/true);
+
+    // 2) Установка. TODO
+    // try {
+    //     installer.InstallVoice();
+    //     installer.InstallSubtitles();
+    //     utils::Print("Установка завершена.", utils::Status::Success);
+    // } catch (const std::exception& e) {
+    //     utils::Print(e.what(), utils::Status::Error);
+    //     return 1;
+    // }
 
     return 0;
 }
