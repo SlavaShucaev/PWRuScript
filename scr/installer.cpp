@@ -1,12 +1,33 @@
 #include "installer.h"
 #include "utils.h"
 
+#include <curl/curl.h>
+
+#include <cstdio>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
 namespace fs = std::filesystem;
 
+// ---------- вспомогательные элементы для libcurl ----------
+namespace {
+
+size_t WriteFileCallback(void* ptr, size_t size, size_t nmemb, void* userdata) {
+    FILE* fp = static_cast<FILE*>(userdata);
+    return std::fwrite(ptr, size, nmemb, fp);
+}
+
+// Прямая ссылка на asset последнего релиза.
+// GitHub сам редиректит на CDN — включаем FOLLOWLOCATION.
+constexpr const char* kGithubReleaseBase =
+    "https://github.com/RikudoSmpai/PWRuLauncher/releases/latest/download/";
+
+} // namespace
+
+// ---------------------------------------------------------------
+// Конструктор
+// ---------------------------------------------------------------
 Installer::Installer(
     const fs::path& contentDir,
     const fs::path& voicePak,
@@ -82,7 +103,7 @@ bool Installer::CheckExistingInstallation(bool needPause) const {
 }
 
 // ---------------------------------------------------------------
-// Установка
+// Установка из локального источника
 // ---------------------------------------------------------------
 
 void Installer::InstallVoice() const {
@@ -128,4 +149,162 @@ void Installer::InstallPak(
 
     fs::create_directories(modsDir);
     fs::copy_file(sourcePak, destination);
+}
+
+// ---------------------------------------------------------------
+// Скачивание с GitHub
+// ---------------------------------------------------------------
+
+bool Installer::DownloadFile(const std::string& url,
+                             const fs::path& destFile) const {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        utils::Print("Не удалось инициализировать libcurl.",
+                     utils::Status::Error);
+        return false;
+    }
+
+    FILE* fp = std::fopen(destFile.string().c_str(), "wb");
+    if (!fp) {
+        utils::Print("Не удалось открыть файл для записи: " + destFile.string(),
+                     utils::Status::Error);
+        curl_easy_cleanup(curl);
+        return false;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteFileCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+    // GitHub Releases всегда редиректит на CDN — обязательно!
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    // Таймауты, чтобы не зависало навсегда
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
+    // User-Agent — некоторые серверы отказывают без него
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "PWRuLauncher-installer/1.0");
+
+    CURLcode res = curl_easy_perform(curl);
+
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+    curl_easy_cleanup(curl);
+    std::fclose(fp);
+
+    // --- разбор ошибок ---
+    if (res != CURLE_OK) {
+        if (res == CURLE_COULDNT_CONNECT || res == CURLE_COULDNT_RESOLVE_HOST) {
+            utils::Print(
+                "Не удалось подключиться к GitHub.\n"
+                "Проверьте интернет-соединение.\n"
+                "URL: " + url,
+                utils::Status::Error);
+        } else {
+            utils::Print(
+                std::string("Ошибка загрузки: ") + curl_easy_strerror(res) +
+                    "\nURL: " + url,
+                utils::Status::Error);
+        }
+        std::error_code ignore;
+        fs::remove(destFile, ignore);
+        return false;
+    }
+
+    if (httpCode >= 400) {
+        utils::Print(
+            "Сервер GitHub вернул HTTP " + std::to_string(httpCode) +
+                ".\nФайл не найден или недоступен: " + url,
+            utils::Status::Error);
+        std::error_code ignore;
+        fs::remove(destFile, ignore);
+        return false;
+    }
+
+    // Проверяем, что файл реально непустой
+    std::error_code ec;
+    auto sz = fs::file_size(destFile, ec);
+    if (ec || sz == 0) {
+        utils::Print("Скачанный файл пуст: " + destFile.string(),
+                     utils::Status::Error);
+        std::error_code ignore;
+        fs::remove(destFile, ignore);
+        return false;
+    }
+
+    utils::Print("Скачано: " + destFile.filename().string() +
+                     " (" + std::to_string(sz) + " байт)",
+                 utils::Status::Success);
+    return true;
+}
+
+bool Installer::DownloadAndInstallAll() const {
+    utils::Print("Скачивание файлов локализации с GitHub...",
+                 utils::Status::Info);
+
+    // Куда кладём файлы — сразу в целевую папку ~mods,
+    // но под временными именами *.download
+    const fs::path paksMods = contentDir_ / "Content" / "Paks" / "~mods";
+    std::error_code ec;
+    fs::create_directories(paksMods, ec);
+    if (ec) {
+        utils::Print("Не удалось создать папку: " + paksMods.string(),
+                     utils::Status::Error);
+        return false;
+    }
+
+    const fs::path tmpVoice = paksMods / "PW_RU_Voice.pak.download";
+    const fs::path tmpSubs  = paksMods / "PW_RU_Subs.pak.download";
+
+    // ---- Скачиваем озвучку ----
+    const std::string voiceUrl =
+        std::string(kGithubReleaseBase) + "PW_RU_Voice.pak";
+    if (!DownloadFile(voiceUrl, tmpVoice)) {
+        utils::Print("Не удалось скачать файл озвучки.",
+                     utils::Status::Error);
+        return false;
+    }
+
+    // ---- Скачиваем субтитры ----
+    const std::string subsUrl =
+        std::string(kGithubReleaseBase) + "PW_RU_Subs.pak";
+    if (!DownloadFile(subsUrl, tmpSubs)) {
+        utils::Print("Не удалось скачать файл субтитров.",
+                     utils::Status::Error);
+        std::error_code ignore;
+        fs::remove(tmpVoice, ignore);
+        return false;
+    }
+
+    // ---- Устанавливаем (переименовываем в целевые имена) ----
+    const fs::path finalVoice = paksMods / "PW_RU_Voice.pak";
+    const fs::path finalSubs  = paksMods / "PW_RU_Subs.pak";
+
+    try {
+        if (fs::exists(finalVoice)) {
+            utils::Print("Перезапись существующего файла: " +
+                             finalVoice.string(),
+                         utils::Status::Warning);
+            fs::remove(finalVoice);
+        }
+        fs::rename(tmpVoice, finalVoice);
+
+        if (fs::exists(finalSubs)) {
+            utils::Print("Перезапись существующего файла: " +
+                             finalSubs.string(),
+                         utils::Status::Warning);
+            fs::remove(finalSubs);
+        }
+        fs::rename(tmpSubs, finalSubs);
+    } catch (const std::exception& e) {
+        utils::Print(std::string("Не удалось установить файл: ") + e.what(),
+                     utils::Status::Error);
+        std::error_code ignore;
+        fs::remove(tmpVoice, ignore);
+        fs::remove(tmpSubs, ignore);
+        return false;
+    }
+
+    utils::Print("Озвучка и субтитры успешно установлены.",
+                 utils::Status::Success);
+    return true;
 }

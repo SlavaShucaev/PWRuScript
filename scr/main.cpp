@@ -2,6 +2,7 @@
 #include "locator.h"
 #include "utils.h"
 
+#include <curl/curl.h>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -9,6 +10,10 @@
 namespace fs = std::filesystem;
 
 int main() {
+    // Глобальная инициализация libcurl (обязательно для многопоточных
+    // приложений; в однопоточном не помешает).
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
     const std::string exe_file_name = "ProjectWingman-Win64-Shipping";
 
     Locator locator;
@@ -21,6 +26,7 @@ int main() {
         if (gamePath.empty()) {
             utils::Print("Путь не указан. Установка отменена.",
                          utils::Status::Error);
+            curl_global_cleanup();
             return 1;
         }
     }
@@ -34,29 +40,29 @@ int main() {
             "Установка локализации приостановлена.\n"
             "Пожалуйста, закройте игру.",
             utils::Status::Warning);
+        curl_global_cleanup();
         return 1;
     }
     utils::Print("Игра сейчас не запущена.", utils::Status::Success);
 
-    // Пути к исходным .pak — задаются вызывающей стороной.
-    const fs::path voicePak    = "PW_RU_Voice.pak";
-    const fs::path subtitlePak = "PW_RU_Subs.pak";
+    // contentDir_ = <...>/Project Wingman/ProjectWingman
+    Installer installer(gamePath / "ProjectWingman",
+                        "PW_RU_Voice.pak",
+                        "PW_RU_Subs.pak");
 
-    Installer installer(gamePath / "ProjectWingman", voicePak, subtitlePak);
-
-    // 1) Проверяем, что уже установлено. При находках — предупреждаем
-    //    и ждём Enter.
+    // Показываем, что уже установлено
     installer.CheckExistingInstallation(/*needPause=*/true);
 
-    // 2) Установка. TODO
-    // try {
-    //     installer.InstallVoice();
-    //     installer.InstallSubtitles();
-    //     utils::Print("Установка завершена.", utils::Status::Success);
-    // } catch (const std::exception& e) {
-    //     utils::Print(e.what(), utils::Status::Error);
-    //     return 1;
-    // }
+    // Скачиваем и ставим
+    const bool ok = installer.DownloadAndInstallAll();
+
+    curl_global_cleanup();
+
+    if (!ok) {
+        utils::Print("Установка не завершена из-за ошибок.",
+                     utils::Status::Error);
+        return 1;
+    }
 
     return 0;
 }
