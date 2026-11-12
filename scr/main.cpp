@@ -62,15 +62,23 @@ int main() {
         return 1;
     }
 
-    const bool ok = installer.DownloadAndInstallAll();
-
-    curl_global_cleanup();
-
-    if (!ok) {
+    if (!installer.DownloadAndInstallAll()) {
         utils::Print("Установка не завершена из-за ошибок.",
                      utils::Status::Error);
+        curl_global_cleanup();
         return 1;
     }
 
+    if (!installer.DownloadAndInstallUE4SS()) {
+        utils::Print("Установка UE4SS не завершена из-за ошибок.",
+                     utils::Status::Error);
+        curl_global_cleanup();
+        return 1;
+    }
+
+    utils::Print("Все компоненты успешно установлены.",
+                 utils::Status::Success);
+
+    curl_global_cleanup();
     return 0;
 }

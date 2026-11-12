@@ -1,9 +1,12 @@
 #include "installer.h"
 #include "utils.h"
 
+#include <archive.h>
+#include <archive_entry.h>
 #include <curl/curl.h>
 
 #include <cstdio>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -359,6 +362,276 @@ bool Installer::DownloadAndInstallAll() const {
     }
 
     utils::Print("Озвучка и субтитры успешно установлены.",
+                 utils::Status::Success);
+    return true;
+}
+
+// ---------------------------------------------------------------
+// UE4SS: распаковка zip
+// ---------------------------------------------------------------
+
+bool Installer::ExtractZip(const fs::path& zipPath,
+                           const fs::path& destDir) const {
+    struct archive* a = archive_read_new();
+    archive_read_support_filter_all(a);
+    archive_read_support_format_all(a);
+
+    if (archive_read_open_filename(a, zipPath.string().c_str(),
+                                   10240) != ARCHIVE_OK) {
+        utils::Print(
+            "Не удалось открыть архив: " + zipPath.string() +
+                "\n" + archive_error_string(a),
+            utils::Status::Error);
+        archive_read_free(a);
+        return false;
+    }
+
+    std::error_code ec;
+    fs::create_directories(destDir, ec);
+    if (ec) {
+        utils::Print("Не удалось создать папку распаковки: " +
+                         destDir.string(), utils::Status::Error);
+        archive_read_free(a);
+        return false;
+    }
+
+    const fs::path rootNorm = fs::weakly_canonical(destDir, ec);
+    if (ec) {
+        utils::Print("Не удалось нормализовать путь распаковки: " +
+                         ec.message(), utils::Status::Error);
+        archive_read_free(a);
+        return false;
+    }
+
+    struct archive_entry* entry = nullptr;
+    bool ok = true;
+
+    while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+        const char* entryName = archive_entry_pathname(entry);
+        if (!entryName) { ok = false; break; }
+
+        fs::path target = rootNorm / entryName;
+        std::error_code pec;
+        fs::path targetParentNorm =
+            fs::weakly_canonical(target.parent_path(), pec);
+        if (pec) {
+            // Родитель ещё не существует — создадим и попробуем снова
+            fs::create_directories(target.parent_path(), pec);
+            targetParentNorm =
+                fs::weakly_canonical(target.parent_path(), pec);
+        }
+
+        // Защита от path traversal
+        const std::string rootStr   = rootNorm.string();
+        const std::string parentStr = targetParentNorm.string();
+        if (parentStr.rfind(rootStr, 0) != 0 &&
+            parentStr != rootStr) {
+            utils::Print("Небезопасный путь в архиве: " +
+                             std::string(entryName),
+                         utils::Status::Error);
+            ok = false;
+            break;
+        }
+
+        if (archive_entry_filetype(entry) == AE_IFDIR) {
+            fs::create_directories(target, ec);
+            if (ec) { ok = false; break; }
+            continue;
+        }
+
+        fs::create_directories(target.parent_path(), ec);
+        if (ec) { ok = false; break; }
+
+        std::ofstream out(target, std::ios::binary);
+        if (!out) {
+            utils::Print("Не удалось записать файл: " + target.string(),
+                         utils::Status::Error);
+            ok = false;
+            break;
+        }
+
+        const void* buff = nullptr;
+        size_t size = 0;
+        la_int64_t offset = 0;
+        while (true) {
+            int r = archive_read_data_block(a, &buff, &size, &offset);
+            if (r == ARCHIVE_EOF) break;
+            if (r != ARCHIVE_OK) {
+                utils::Print(
+                    "Ошибка чтения архива: " +
+                        std::string(archive_error_string(a)),
+                    utils::Status::Error);
+                ok = false;
+                break;
+            }
+            out.write(static_cast<const char*>(buff),
+                      static_cast<std::streamsize>(size));
+            if (!out) { ok = false; break; }
+        }
+        if (!ok) break;
+    }
+
+    archive_read_close(a);
+    archive_read_free(a);
+
+    if (!ok) {
+        utils::Print("Распаковка архива завершилась с ошибкой.",
+                     utils::Status::Error);
+    }
+    return ok;
+}
+
+// ---------------------------------------------------------------
+// UE4SS: раскладка файлов по целям
+// ---------------------------------------------------------------
+
+bool Installer::DeployUE4SSFiles(const fs::path& extractedRoot) const {
+    std::error_code ec;
+
+    const fs::path moviesDst = contentDir_ / "Content" / "Movies";
+    const fs::path win64Dst  = contentDir_ / "Binaries" / "Win64";
+
+    // 1) Интро
+    const fs::path introSrc  = extractedRoot / "Movies" / "HumbleIntro_PW.mp4";
+    const fs::path introDst  = moviesDst / "HumbleIntro_PW.mp4";
+    const fs::path introOrig = moviesDst / "HumbleIntro_PW.mp4.pwru-orig";
+
+    if (!fs::is_regular_file(introSrc, ec)) {
+        utils::Print("В архиве отсутствует Movies/HumbleIntro_PW.mp4",
+                     utils::Status::Error);
+        return false;
+    }
+
+    if (!fs::is_directory(moviesDst, ec)) {
+        utils::Print("Не найдена папка Movies: " + moviesDst.string(),
+                     utils::Status::Error);
+        return false;
+    }
+
+    if (fs::exists(introDst, ec) && !fs::exists(introOrig, ec)) {
+        fs::rename(introDst, introOrig, ec);
+        if (ec) {
+            utils::Print("Не удалось переименовать оригинальное интро: " +
+                             ec.message(), utils::Status::Error);
+            return false;
+        }
+        utils::Print("Оригинальное интро сохранено как " +
+                         introOrig.filename().string(),
+                     utils::Status::Info);
+    }
+
+    fs::copy_file(introSrc, introDst,
+                  fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        utils::Print("Не удалось установить интро: " + ec.message(),
+                     utils::Status::Error);
+        return false;
+    }
+    utils::Print("Интро установлено: " + introDst.string(),
+                 utils::Status::Success);
+
+    // 2) Win64
+    const fs::path win64Src = extractedRoot / "Win64";
+    if (!fs::is_directory(win64Src, ec)) {
+        utils::Print("В архиве отсутствует папка Win64",
+                     utils::Status::Error);
+        return false;
+    }
+
+    for (const char* name : {"dwmapi.dll",
+                             "UE4SS.dll",
+                             "UE4SS-settings.ini"}) {
+        fs::path src = win64Src / name;
+        fs::path dst = win64Dst / name;
+        if (!fs::is_regular_file(src, ec)) {
+            utils::Print(std::string("В архиве отсутствует Win64/") + name,
+                         utils::Status::Error);
+            return false;
+        }
+        fs::copy_file(src, dst,
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            utils::Print(std::string("Не удалось установить ") + name +
+                             ": " + ec.message(),
+                         utils::Status::Error);
+            return false;
+        }
+        utils::Print(std::string("Установлен ") + name,
+                     utils::Status::Success);
+    }
+
+    // 3) Mods/
+    const fs::path modsSrc = win64Src / "Mods";
+    const fs::path modsDst = win64Dst / "Mods";
+    if (!fs::is_directory(modsSrc, ec)) {
+        utils::Print("В архиве отсутствует папка Win64/Mods",
+                     utils::Status::Error);
+        return false;
+    }
+
+    fs::create_directories(modsDst, ec);
+    if (ec) {
+        utils::Print("Не удалось создать Mods/: " + ec.message(),
+                     utils::Status::Error);
+        return false;
+    }
+
+    fs::copy(modsSrc, modsDst,
+             fs::copy_options::recursive |
+                 fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        utils::Print("Не удалось скопировать Mods/: " + ec.message(),
+                     utils::Status::Error);
+        return false;
+    }
+    utils::Print("Установлена папка Mods/", utils::Status::Success);
+
+    return true;
+}
+
+bool Installer::DownloadAndInstallUE4SS() const {
+    utils::Print("Скачивание UE4SS с GitHub...",
+                 utils::Status::Info);
+
+    const fs::path tmpRoot = contentDir_ / ".pwru_tmp";
+    const fs::path zipPath = tmpRoot / "PW_RU_UE4SS.zip";
+    const fs::path unzDir  = tmpRoot / "ue4ss_extracted";
+
+    std::error_code ec;
+    fs::remove_all(tmpRoot, ec);
+    fs::create_directories(tmpRoot, ec);
+    if (ec) {
+        utils::Print("Не удалось создать временную папку: " +
+                         tmpRoot.string(), utils::Status::Error);
+        return false;
+    }
+
+    const std::string url =
+        std::string(kGithubReleaseBase) + "PW_RU_UE4SS.zip";
+
+    if (!DownloadFile(url, zipPath, "UE4SS")) {
+        utils::Print("Не удалось скачать архив UE4SS.",
+                     utils::Status::Error);
+        fs::remove_all(tmpRoot, ec);
+        return false;
+    }
+
+    if (!ExtractZip(zipPath, unzDir)) {
+        utils::Print("Не удалось распаковать архив UE4SS.",
+                     utils::Status::Error);
+        fs::remove_all(tmpRoot, ec);
+        return false;
+    }
+
+    if (!DeployUE4SSFiles(unzDir)) {
+        utils::Print("Не удалось установить компоненты UE4SS.",
+                     utils::Status::Error);
+        fs::remove_all(tmpRoot, ec);
+        return false;
+    }
+
+    fs::remove_all(tmpRoot, ec);
+    utils::Print("UE4SS и интро успешно установлены.",
                  utils::Status::Success);
     return true;
 }

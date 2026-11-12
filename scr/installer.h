@@ -4,7 +4,6 @@
 #include <stdexcept>
 #include <string>
 
-// Бросается, когда пользователь отказался продолжать установку.
 class UserCancelled : public std::runtime_error {
 public:
     explicit UserCancelled(const std::string& what)
@@ -19,16 +18,16 @@ public:
         const std::filesystem::path& subtitlePak
         );
 
-    // Проверяет уже установленные компоненты.
-    // Если что-то найдено — предупреждает и (при needPause)
-    // спрашивает разрешение на перезапись.
-    // Бросает UserCancelled, если пользователь отказался.
     bool CheckExistingInstallation(bool needPause = true) const;
 
     void InstallVoice() const;
     void InstallSubtitles() const;
 
+    // Скачивает PW_RU_Voice.pak и PW_RU_Subs.pak и ставит их в ~mods/
     bool DownloadAndInstallAll() const;
+
+    // Скачивает PW_RU_UE4SS.zip, распаковывает и ставит UE4SS + интро
+    bool DownloadAndInstallUE4SS() const;
 
 private:
     void InstallPak(
@@ -42,6 +41,11 @@ private:
     bool DownloadFile(const std::string& url,
                       const std::filesystem::path& destFile,
                       const std::string& label) const;
+
+    bool ExtractZip(const std::filesystem::path& zipPath,
+                    const std::filesystem::path& destDir) const;
+
+    bool DeployUE4SSFiles(const std::filesystem::path& extractedRoot) const;
 
     std::filesystem::path contentDir_;
     std::filesystem::path voicePak_;
