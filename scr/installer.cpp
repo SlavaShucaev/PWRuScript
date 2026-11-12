@@ -20,7 +20,6 @@ size_t WriteFileCallback(void* ptr, size_t size, size_t nmemb, void* userdata) {
     return std::fwrite(ptr, size, nmemb, fp);
 }
 
-// Человекочитаемый размер: "1.2 MiB", "512 KiB", "300 B"
 std::string HumanSize(curl_off_t bytes) {
     std::ostringstream os;
     os << std::fixed << std::setprecision(1);
@@ -36,7 +35,6 @@ std::string HumanSize(curl_off_t bytes) {
     return os.str();
 }
 
-// Рисует строку прогресса в stderr через \r.
 void DrawProgress(const std::string& label,
                   curl_off_t dltotal, curl_off_t dlnow) {
     std::ostringstream os;
@@ -59,19 +57,16 @@ void DrawProgress(const std::string& label,
         os << HumanSize(dlnow) << " (размер неизвестен)";
     }
 
-    // Дополняем пробелами, чтобы затереть «хвост» от предыдущей строки
     std::string s = os.str();
     if (s.size() < 100) s.append(100 - s.size(), ' ');
 
     std::cerr << s << std::flush;
 }
 
-// Стирает строку прогресса
 void ClearProgress() {
     std::cerr << '\r' << std::string(100, ' ') << '\r' << std::flush;
 }
 
-// callback прогресса для CURLOPT_XFERINFOFUNCTION
 int ProgressCallback(void* clientp,
                      curl_off_t dltotal,
                      curl_off_t dlnow,
@@ -79,7 +74,7 @@ int ProgressCallback(void* clientp,
                      curl_off_t /*ulnow*/) {
     const std::string* label = static_cast<const std::string*>(clientp);
     DrawProgress(label ? *label : std::string("Загрузка"), dltotal, dlnow);
-    return 0; // 0 — продолжать, non-zero — прервать
+    return 0;
 }
 
 constexpr const char* kGithubReleaseBase =
@@ -138,25 +133,31 @@ bool Installer::CheckExistingInstallation(bool needPause) const {
     found |= CheckFile(binWin64 / "UE4SS-settings.ini");
     found |= CheckDirectory(binWin64 / "Mods");
 
-    if (found) {
-        utils::Print(
-            "Обнаружены ранее установленные компоненты мода.\n"
-            "Установка может перезаписать или конфликтовать с ними.\n"
-            "Проверьте перечисленные выше пути.",
-            utils::Status::Warning);
-
-        if (needPause) {
-            std::cout << "\nНажмите Enter, чтобы продолжить..." << std::flush;
-            if (!std::cin.get()) {
-                std::cin.clear();
-            }
-        }
-    } else {
+    if (!found) {
         utils::Print("Ранее установленных компонентов мода не обнаружено.",
                      utils::Status::Success);
+        return true;
     }
 
-    return found;
+    utils::Print(
+        "Обнаружены ранее установленные компоненты мода.\n"
+        "Установка перезапишет или сконфликтует с ними.\n"
+        "Проверьте перечисленные выше пути.",
+        utils::Status::Warning);
+
+    if (!needPause) {
+        return true;
+    }
+
+    const bool allow = utils::Confirm(
+        "Продолжить и перезаписать существующие файлы?"
+        );
+
+    if (!allow) {
+        throw UserCancelled("Пользователь отказался от перезаписи.");
+    }
+
+    return true;
 }
 
 // ---------------------------------------------------------------
@@ -233,12 +234,10 @@ bool Installer::DownloadFile(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteFileCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-    // GitHub Releases всегда редиректит на CDN — обязательно!
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "PWRuLauncher-installer/1.0");
-    // Прогресс
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ProgressCallback);
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &label);
@@ -251,10 +250,8 @@ bool Installer::DownloadFile(const std::string& url,
     curl_easy_cleanup(curl);
     std::fclose(fp);
 
-    // Стираем строку прогресса перед любыми сообщениями
     ClearProgress();
 
-    // --- разбор ошибок ---
     if (res != CURLE_OK) {
         if (res == CURLE_COULDNT_CONNECT || res == CURLE_COULDNT_RESOLVE_HOST) {
             utils::Print(
@@ -315,7 +312,6 @@ bool Installer::DownloadAndInstallAll() const {
     const fs::path tmpVoice = paksMods / "PW_RU_Voice.pak.download";
     const fs::path tmpSubs  = paksMods / "PW_RU_Subs.pak.download";
 
-    // ---- Скачиваем озвучку ----
     const std::string voiceUrl =
         std::string(kGithubReleaseBase) + "PW_RU_Voice.pak";
     if (!DownloadFile(voiceUrl, tmpVoice, "Озвучка")) {
@@ -324,7 +320,6 @@ bool Installer::DownloadAndInstallAll() const {
         return false;
     }
 
-    // ---- Скачиваем субтитры ----
     const std::string subsUrl =
         std::string(kGithubReleaseBase) + "PW_RU_Subs.pak";
     if (!DownloadFile(subsUrl, tmpSubs, "Субтитры")) {
@@ -335,7 +330,6 @@ bool Installer::DownloadAndInstallAll() const {
         return false;
     }
 
-    // ---- Устанавливаем ----
     const fs::path finalVoice = paksMods / "PW_RU_Voice.pak";
     const fs::path finalSubs  = paksMods / "PW_RU_Subs.pak";
 

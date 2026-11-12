@@ -5,7 +5,6 @@
 #include <fstream>
 #include <iostream>
 #include <regex>
-#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -17,32 +16,24 @@ Locator::Locator() {
     if (const char* env = std::getenv("HOME")) {
         homeDir_ = env;
     } else if (const char* env = std::getenv("USERPROFILE")) {
-        // на случай запуска под Wine/подобным окружением
         homeDir_ = env;
     }
 }
 
-// Все возможные корни Steam на Linux.
 std::vector<fs::path> Locator::CandidateSteamPaths() const {
     std::vector<fs::path> result;
     if (homeDir_.empty()) return result;
 
     const fs::path home = homeDir_;
 
-    // Классический симлинк
     result.push_back(home / ".steam" / "steam");
-    // Flatpak
     result.push_back(home / ".var" / "app" / "com.valvesoftware.Steam"
                      / ".local" / "share" / "Steam");
-    // Snap
     result.push_back(home / "snap" / "steam" / "common" / ".local"
                      / "share" / "Steam");
-    // Нативный XDG-путь
     result.push_back(home / ".local" / "share" / "Steam");
-    // Debian/Ubuntu иногда
     result.push_back(home / ".steam" / "root");
 
-    // Убираем несуществующие
     std::vector<fs::path> filtered;
     for (auto& p : result) {
         std::error_code ec;
@@ -53,7 +44,6 @@ std::vector<fs::path> Locator::CandidateSteamPaths() const {
     return filtered;
 }
 
-// Читает libraryfolders.vdf и вытаскивает все "path" "..."
 std::vector<fs::path> Locator::ReadSteamLibraries(
     const fs::path& steamRoot) const {
     std::vector<fs::path> libs;
@@ -62,14 +52,12 @@ std::vector<fs::path> Locator::ReadSteamLibraries(
     std::ifstream in(vdf);
     if (!in) return libs;
 
-    // Грубый, но устойчивый разбор: ищем строки вида:  "path"   "/some/path"
     static const std::regex re(R"re("path"\s+"([^"]+)")re");
     std::string line;
     while (std::getline(in, line)) {
         std::smatch m;
         if (std::regex_search(line, m, re)) {
             std::string p = m[1].str();
-            // разэкранирование \\ -> \ (VDF экранирует бэкслеши)
             std::string unescaped;
             unescaped.reserve(p.size());
             for (std::size_t i = 0; i < p.size(); ++i) {
@@ -87,15 +75,12 @@ std::vector<fs::path> Locator::ReadSteamLibraries(
 }
 
 fs::path Locator::GetGamePath() {
-    // 1. Проходим по всем известным корням Steam.
     for (const auto& steamRoot : CandidateSteamPaths()) {
-        // 1.1. Стандартная папка внутри этого корня.
         fs::path guess = steamRoot / "steamapps" / "common" / kGameFolderName;
         if (IsValidDirectory(guess.string())) {
             return guess;
         }
 
-        // 1.2. Дополнительные библиотеки.
         for (const auto& lib : ReadSteamLibraries(steamRoot)) {
             fs::path p = lib / "steamapps" / "common" / kGameFolderName;
             if (IsValidDirectory(p.string())) {
@@ -106,7 +91,6 @@ fs::path Locator::GetGamePath() {
     return {};
 }
 
-// Запрашивает путь у пользователя.
 fs::path Locator::AskUserForGamePath() {
     utils::Print(
         "Не удалось автоматически найти папку Project Wingman.\n"
@@ -121,34 +105,31 @@ fs::path Locator::AskUserForGamePath() {
         if (!std::getline(std::cin, line)) {
             return {};
         }
-        // Тримминг пробелов по краям
         auto start = line.find_first_not_of(" \t\r\n");
         if (start == std::string::npos) return {};
         auto end = line.find_last_not_of(" \t\r\n");
         std::string trimmed = line.substr(start, end - start + 1);
 
-        // Убираем возможные кавычки, если пользователь их поставил
         if (trimmed.size() >= 2 &&
             ((trimmed.front() == '"' && trimmed.back() == '"') ||
              (trimmed.front() == '\'' && trimmed.back() == '\''))) {
             trimmed = trimmed.substr(1, trimmed.size() - 2);
         }
 
-        // Принимаем как папку самой игры, так и её родителя —
-        // если пользователь указал .../common, то добавляем имя игры.
         fs::path p(trimmed);
         if (IsValidDirectory(p.string())) {
             fs::path candidate = p / kGameFolderName;
             if (IsValidDirectory(candidate.string())) {
-                return candidate;     // был указан .../common
+                return candidate;
             }
-            // Проверим, похоже ли это на папку игры (наличие Paks)
-            if (IsValidDirectory((p / "Paks").string())) {
+            if (IsValidDirectory((p / "Paks").string()) ||
+                IsValidDirectory((p / "Content").string())) {
                 return p;
             }
             utils::Print(
                 "В указанной папке не найдено содержимого игры "
-                "(нет подпапки \"Paks\" или \"" + std::string(kGameFolderName) + "\").",
+                "(нет подпапки \"Paks\" или \"" +
+                    std::string(kGameFolderName) + "\").",
                 utils::Status::Warning);
             continue;
         }

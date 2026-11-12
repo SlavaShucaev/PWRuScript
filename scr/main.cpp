@@ -48,7 +48,19 @@ int main() {
                         "PW_RU_Voice.pak",
                         "PW_RU_Subs.pak");
 
-    installer.CheckExistingInstallation(/*needPause=*/true);
+    try {
+        installer.CheckExistingInstallation(/*needPause=*/true);
+    } catch (const UserCancelled& e) {
+        utils::Print(std::string("Установка отменена: ") + e.what(),
+                     utils::Status::Info);
+        curl_global_cleanup();
+        return 1;
+    } catch (const std::exception& e) {
+        utils::Print(std::string("Ошибка проверки: ") + e.what(),
+                     utils::Status::Error);
+        curl_global_cleanup();
+        return 1;
+    }
 
     const bool ok = installer.DownloadAndInstallAll();
 
