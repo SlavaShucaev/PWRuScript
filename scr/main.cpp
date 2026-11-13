@@ -76,8 +76,12 @@ int main() {
         return 1;
     }
 
-    utils::Print("Все компоненты успешно установлены.",
-                 utils::Status::Success);
+    if (!installer.ApplyLanguageFix()) {
+    utils::Print("Не удалось применить исправление языка.", utils::Status::Error);
+    // Можно решить, продолжать или нет. Лучше сообщить, но не прерывать установку.
+    }
+
+    utils::Print("Все компоненты успешно установлены.", utils::Status::Success);
 
     curl_global_cleanup();
     return 0;

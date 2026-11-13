@@ -28,6 +28,9 @@ public:
 
     // Скачивает PW_RU_UE4SS.zip, распаковывает и ставит UE4SS + интро
     bool DownloadAndInstallUE4SS() const;
+    
+    // Установка патча локализации
+    bool ApplyLanguageFix() const;
 
 private:
     void InstallPak(

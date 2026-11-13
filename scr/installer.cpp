@@ -11,6 +11,7 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -632,6 +633,116 @@ bool Installer::DownloadAndInstallUE4SS() const {
 
     fs::remove_all(tmpRoot, ec);
     utils::Print("UE4SS и интро успешно установлены.",
+                 utils::Status::Success);
+    return true;
+}
+
+
+bool Installer::ApplyLanguageFix() const {
+    utils::Print("Применение исправления языка...", utils::Status::Info);
+
+    // 1. Находим исполняемый файл игры
+    const fs::path exePath = contentDir_ / "Binaries" / "Win64" /
+                             "ProjectWingman-Win64-Shipping.exe";
+    if (!fs::exists(exePath)) {
+        utils::Print("Не найден исполняемый файл игры: " + exePath.string(),
+                     utils::Status::Error);
+        return false;
+    }
+
+    // 2. Создаем резервную копию
+    const fs::path backupPath = exePath.string() + ".bak-pwlang";
+    std::error_code ec;
+    if (!fs::exists(backupPath, ec)) {
+        fs::copy_file(exePath, backupPath,
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            utils::Print("Не удалось создать резервную копию: " + ec.message(),
+                         utils::Status::Error);
+            return false;
+        }
+        utils::Print("Создана резервная копия: " +
+                         backupPath.filename().string(),
+                     utils::Status::Success);
+    }
+
+    // 3. Читаем файл в память
+    std::ifstream inFile(exePath, std::ios::binary);
+    if (!inFile) {
+        utils::Print("Не удалось открыть файл для чтения: " + exePath.string(),
+                     utils::Status::Error);
+        return false;
+    }
+    std::vector<char> buffer((std::istreambuf_iterator<char>(inFile)),
+                             std::istreambuf_iterator<char>());
+    inFile.close();
+
+    if (buffer.empty()) {
+        utils::Print("Исполняемый файл пуст: " + exePath.string(),
+                     utils::Status::Error);
+        return false;
+    }
+
+    // 4. Ищем и заменяем "en-US" -> "ru-RU" в UTF-16LE
+    //    Каждый символ занимает 2 байта (младший байт, затем 0x00).
+    const char target[]      = {'e', 0, 'n', 0, '-', 0, 'U', 0, 'S', 0};
+    const char replacement[] = {'r', 0, 'u', 0, '-', 0, 'R', 0, 'U', 0};
+
+    constexpr std::size_t kTargetLen      = sizeof(target);
+    constexpr std::size_t kReplacementLen = sizeof(replacement);
+    static_assert(kTargetLen == kReplacementLen,
+                  "Замена должна быть той же длины, что и искомая строка");
+
+    bool found = false;
+
+    auto it = buffer.begin();
+    while (true) {
+        it = std::search(it, buffer.end(),
+                         std::begin(target), std::end(target));
+        if (it == buffer.end()) break;
+
+        found = true;
+
+        // Проверяем, что запись не выйдет за пределы буфера
+        if (std::distance(it, buffer.end()) <
+            static_cast<std::ptrdiff_t>(kReplacementLen)) {
+            utils::Print("Ошибка: недостаточно места для замены языка.",
+                         utils::Status::Error);
+            return false;
+        }
+
+        std::copy(std::begin(replacement), std::end(replacement), it);
+        std::advance(it, kReplacementLen);
+    }
+
+    if (!found) {
+        utils::Print(
+            "Не найдена строка 'en-US' (UTF-16LE) в исполняемом файле.\n"
+            "Возможно, исправление уже применено или версия игры "
+            "не поддерживается.",
+            utils::Status::Warning);
+        // Не считаем это ошибкой — возможно, фикс уже применён
+        return true;
+    }
+
+    // 5. Записываем изменённый файл обратно
+    std::ofstream outFile(exePath, std::ios::binary | std::ios::trunc);
+    if (!outFile) {
+        utils::Print("Не удалось открыть файл для записи: " + exePath.string(),
+                     utils::Status::Error);
+        return false;
+    }
+    outFile.write(buffer.data(),
+                  static_cast<std::streamsize>(buffer.size()));
+    outFile.close();
+
+    if (!outFile) {
+        utils::Print("Ошибка при записи измененного файла.",
+                     utils::Status::Error);
+        return false;
+    }
+
+    utils::Print("Исправление языка успешно применено (en-US -> ru-RU).",
                  utils::Status::Success);
     return true;
 }
