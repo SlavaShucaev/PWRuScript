@@ -5,19 +5,23 @@
 #include <archive_entry.h>
 #include <curl/curl.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
-#include <vector>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
 // ---------- вспомогательные элементы для libcurl ----------
 namespace {
+
+// Фиксированная ширина строки прогресс-бара, чтобы \r-перерисовка не оставляла хвостов.
+constexpr std::size_t kProgressLineWidth = 100;
 
 size_t WriteFileCallback(void* ptr, size_t size, size_t nmemb, void* userdata) {
     FILE* fp = static_cast<FILE*>(userdata);
@@ -62,20 +66,18 @@ void DrawProgress(const std::string& label,
     }
 
     std::string s = os.str();
-    if (s.size() < 100) s.append(100 - s.size(), ' ');
+    if (s.size() < kProgressLineWidth) s.append(kProgressLineWidth - s.size(), ' ');
 
     std::cerr << s << std::flush;
 }
 
 void ClearProgress() {
-    std::cerr << '\r' << std::string(100, ' ') << '\r' << std::flush;
+    std::cerr << '\r' << std::string(kProgressLineWidth, ' ') << '\r' << std::flush;
 }
 
 int ProgressCallback(void* clientp,
-                     curl_off_t dltotal,
-                     curl_off_t dlnow,
-                     curl_off_t /*ultotal*/,
-                     curl_off_t /*ulnow*/) {
+                     curl_off_t dltotal, curl_off_t dlnow,
+                     curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
     const std::string* label = static_cast<const std::string*>(clientp);
     DrawProgress(label ? *label : std::string("Загрузка"), dltotal, dlnow);
     return 0;
@@ -104,38 +106,17 @@ Installer::Installer(
 // Проверки существующих файлов
 // ---------------------------------------------------------------
 
-bool Installer::CheckFile(const fs::path& p) const {
-    std::error_code ec;
-    if (!fs::exists(p, ec) || ec) return false;
-    if (!fs::is_regular_file(p, ec) || ec) return false;
-
-    utils::Print("Найден уже установленный файл:\n" + p.string(),
-                 utils::Status::Warning);
-    return true;
-}
-
-bool Installer::CheckDirectory(const fs::path& p) const {
-    std::error_code ec;
-    if (!fs::exists(p, ec) || ec) return false;
-    if (!fs::is_directory(p, ec) || ec) return false;
-
-    utils::Print("Найдена уже установленная папка:\n" + p.string(),
-                 utils::Status::Warning);
-    return true;
-}
-
 bool Installer::CheckExistingInstallation(bool needPause) const {
     const fs::path paksMods = contentDir_ / "Content" / "Paks" / "~mods";
     const fs::path binWin64 = contentDir_ / "Binaries" / "Win64";
 
     bool found = false;
-
-    found |= CheckFile(paksMods / "PW_RU_Voice.pak");
-    found |= CheckFile(paksMods / "PW_RU_Subs.pak");
-    found |= CheckFile(binWin64 / "dwmapi.dll");
-    found |= CheckFile(binWin64 / "UE4SS.dll");
-    found |= CheckFile(binWin64 / "UE4SS-settings.ini");
-    found |= CheckDirectory(binWin64 / "Mods");
+    found |= utils::CheckPath(paksMods / "PW_RU_Voice.pak",   false, "файл");
+    found |= utils::CheckPath(paksMods / "PW_RU_Subs.pak",    false, "файл");
+    found |= utils::CheckPath(binWin64 / "dwmapi.dll",        false, "файл");
+    found |= utils::CheckPath(binWin64 / "UE4SS.dll",         false, "файл");
+    found |= utils::CheckPath(binWin64 / "UE4SS-settings.ini", false, "файл");
+    found |= utils::CheckPath(binWin64 / "Mods",              true,  "папка");
 
     if (!found) {
         utils::Print("Ранее установленных компонентов мода не обнаружено.",
@@ -149,18 +130,10 @@ bool Installer::CheckExistingInstallation(bool needPause) const {
         "Проверьте перечисленные выше пути.",
         utils::Status::Warning);
 
-    if (!needPause) {
-        return true;
-    }
-
-    const bool allow = utils::Confirm(
-        "Продолжить и перезаписать существующие файлы?"
-        );
-
-    if (!allow) {
+    if (needPause &&
+        !utils::Confirm("Продолжить и перезаписать существующие файлы?")) {
         throw UserCancelled("Пользователь отказался от перезаписи.");
     }
-
     return true;
 }
 
@@ -182,21 +155,17 @@ void Installer::InstallPak(
     ) const {
     if (!fs::is_regular_file(sourcePak)) {
         throw std::runtime_error(
-            "Исходный файл не найден: " + sourcePak.string()
-            );
+            "Исходный файл не найден: " + sourcePak.string());
     }
-
     if (sourcePak.extension() != ".pak") {
         throw std::runtime_error(
-            "Ожидался файл .pak: " + sourcePak.string()
-            );
+            "Ожидался файл .pak: " + sourcePak.string());
     }
 
     const fs::path paksDir = contentDir_ / "Content" / "Paks";
     if (!fs::is_directory(paksDir)) {
         throw std::runtime_error(
-            "Не найдена папка Paks: " + paksDir.string()
-            );
+            "Не найдена папка Paks: " + paksDir.string());
     }
 
     const fs::path modsDir     = paksDir / "~mods";
@@ -205,8 +174,7 @@ void Installer::InstallPak(
     if (fs::exists(destination)) {
         throw std::runtime_error(
             "Файл уже существует, перезапись отменена: "
-            + destination.string()
-            );
+            + destination.string());
     }
 
     fs::create_directories(modsDir);
@@ -247,30 +215,19 @@ bool Installer::DownloadFile(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &label);
 
     CURLcode res = curl_easy_perform(curl);
-
     long httpCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-
     curl_easy_cleanup(curl);
     std::fclose(fp);
-
     ClearProgress();
 
     if (res != CURLE_OK) {
-        if (res == CURLE_COULDNT_CONNECT || res == CURLE_COULDNT_RESOLVE_HOST) {
-            utils::Print(
-                "Не удалось подключиться к GitHub.\n"
-                "Проверьте интернет-соединение.\n"
-                "URL: " + url,
-                utils::Status::Error);
-        } else {
-            utils::Print(
-                std::string("Ошибка загрузки: ") + curl_easy_strerror(res) +
-                    "\nURL: " + url,
-                utils::Status::Error);
-        }
-        std::error_code ignore;
-        fs::remove(destFile, ignore);
+        const std::string reason =
+            (res == CURLE_COULDNT_CONNECT || res == CURLE_COULDNT_RESOLVE_HOST)
+                ? "Не удалось подключиться к GitHub.\nПроверьте интернет-соединение."
+                : std::string("Ошибка загрузки: ") + curl_easy_strerror(res);
+        utils::Print(reason + "\nURL: " + url, utils::Status::Error);
+        utils::RemoveQuietly(destFile);
         return false;
     }
 
@@ -279,8 +236,7 @@ bool Installer::DownloadFile(const std::string& url,
             "Сервер GitHub вернул HTTP " + std::to_string(httpCode) +
                 ".\nФайл не найден или недоступен: " + url,
             utils::Status::Error);
-        std::error_code ignore;
-        fs::remove(destFile, ignore);
+        utils::RemoveQuietly(destFile);
         return false;
     }
 
@@ -289,8 +245,7 @@ bool Installer::DownloadFile(const std::string& url,
     if (ec || sz == 0) {
         utils::Print("Скачанный файл пуст: " + destFile.string(),
                      utils::Status::Error);
-        std::error_code ignore;
-        fs::remove(destFile, ignore);
+        utils::RemoveQuietly(destFile);
         return false;
     }
 
@@ -300,10 +255,8 @@ bool Installer::DownloadFile(const std::string& url,
     return true;
 }
 
-bool Installer::DownloadAndInstallAll() const {
-    utils::Print("Скачивание файлов локализации с GitHub...",
-                 utils::Status::Info);
-
+bool Installer::DownloadPakToMods(const std::string& fileName,
+                                  const std::string& label) const {
     const fs::path paksMods = contentDir_ / "Content" / "Paks" / "~mods";
     std::error_code ec;
     fs::create_directories(paksMods, ec);
@@ -313,52 +266,47 @@ bool Installer::DownloadAndInstallAll() const {
         return false;
     }
 
-    const fs::path tmpVoice = paksMods / "PW_RU_Voice.pak.download";
-    const fs::path tmpSubs  = paksMods / "PW_RU_Subs.pak.download";
+    const fs::path tmpFile   = paksMods / (fileName + ".download");
+    const fs::path finalFile = paksMods / fileName;
 
-    const std::string voiceUrl =
-        std::string(kGithubReleaseBase) + "PW_RU_Voice.pak";
-    if (!DownloadFile(voiceUrl, tmpVoice, "Озвучка")) {
+    if (!DownloadFile(std::string(kGithubReleaseBase) + fileName,
+                      tmpFile, label)) {
+        return false;
+    }
+
+    if (fs::exists(finalFile)) {
+        utils::Print("Перезапись существующего файла: " + finalFile.string(),
+                     utils::Status::Warning);
+        fs::remove(finalFile);
+    }
+
+    try {
+        fs::rename(tmpFile, finalFile);
+    } catch (const std::exception& e) {
+        utils::Print(std::string("Не удалось установить файл: ") + e.what(),
+                     utils::Status::Error);
+        utils::RemoveQuietly(tmpFile);
+        return false;
+    }
+    return true;
+}
+
+bool Installer::DownloadAndInstallAll() const {
+    utils::Print("Скачивание файлов локализации с GitHub...",
+                 utils::Status::Info);
+
+    if (!DownloadPakToMods("PW_RU_Voice.pak", "Озвучка")) {
         utils::Print("Не удалось скачать файл озвучки.",
                      utils::Status::Error);
         return false;
     }
 
-    const std::string subsUrl =
-        std::string(kGithubReleaseBase) + "PW_RU_Subs.pak";
-    if (!DownloadFile(subsUrl, tmpSubs, "Субтитры")) {
+    if (!DownloadPakToMods("PW_RU_Subs.pak", "Субтитры")) {
         utils::Print("Не удалось скачать файл субтитров.",
                      utils::Status::Error);
-        std::error_code ignore;
-        fs::remove(tmpVoice, ignore);
-        return false;
-    }
-
-    const fs::path finalVoice = paksMods / "PW_RU_Voice.pak";
-    const fs::path finalSubs  = paksMods / "PW_RU_Subs.pak";
-
-    try {
-        if (fs::exists(finalVoice)) {
-            utils::Print("Перезапись существующего файла: " +
-                             finalVoice.string(),
-                         utils::Status::Warning);
-            fs::remove(finalVoice);
-        }
-        fs::rename(tmpVoice, finalVoice);
-
-        if (fs::exists(finalSubs)) {
-            utils::Print("Перезапись существующего файла: " +
-                             finalSubs.string(),
-                         utils::Status::Warning);
-            fs::remove(finalSubs);
-        }
-        fs::rename(tmpSubs, finalSubs);
-    } catch (const std::exception& e) {
-        utils::Print(std::string("Не удалось установить файл: ") + e.what(),
-                     utils::Status::Error);
-        std::error_code ignore;
-        fs::remove(tmpVoice, ignore);
-        fs::remove(tmpSubs, ignore);
+        // Откатываем уже скачанную озвучку.
+        utils::RemoveQuietly(contentDir_ / "Content" / "Paks" / "~mods"
+                             / "PW_RU_Voice.pak");
         return false;
     }
 
@@ -404,6 +352,12 @@ bool Installer::ExtractZip(const fs::path& zipPath,
         return false;
     }
 
+    // Проверка, что target остаётся внутри rootNorm (защита от path traversal).
+    const std::string rootStr = rootNorm.string();
+    auto isInsideRoot = [&rootStr](const std::string& p) {
+        return p.rfind(rootStr, 0) == 0 || p == rootStr;
+    };
+
     struct archive_entry* entry = nullptr;
     bool ok = true;
 
@@ -411,22 +365,15 @@ bool Installer::ExtractZip(const fs::path& zipPath,
         const char* entryName = archive_entry_pathname(entry);
         if (!entryName) { ok = false; break; }
 
-        fs::path target = rootNorm / entryName;
+        const fs::path target = rootNorm / entryName;
         std::error_code pec;
-        fs::path targetParentNorm =
-            fs::weakly_canonical(target.parent_path(), pec);
+        fs::path parentNorm = fs::weakly_canonical(target.parent_path(), pec);
         if (pec) {
-            // Родитель ещё не существует — создадим и попробуем снова
             fs::create_directories(target.parent_path(), pec);
-            targetParentNorm =
-                fs::weakly_canonical(target.parent_path(), pec);
+            parentNorm = fs::weakly_canonical(target.parent_path(), pec);
         }
 
-        // Защита от path traversal
-        const std::string rootStr   = rootNorm.string();
-        const std::string parentStr = targetParentNorm.string();
-        if (parentStr.rfind(rootStr, 0) != 0 &&
-            parentStr != rootStr) {
+        if (!isInsideRoot(parentNorm.string())) {
             utils::Print("Небезопасный путь в архиве: " +
                              std::string(entryName),
                          utils::Status::Error);
@@ -486,13 +433,28 @@ bool Installer::ExtractZip(const fs::path& zipPath,
 // UE4SS: раскладка файлов по целям
 // ---------------------------------------------------------------
 
+bool Installer::CopyFileOrLog(const fs::path& src,
+                              const fs::path& dst,
+                              const std::string& description) const {
+    std::error_code ec;
+    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        utils::Print("Не удалось установить " + description + ": " +
+                         ec.message(),
+                     utils::Status::Error);
+        return false;
+    }
+    utils::Print("Установлен " + description, utils::Status::Success);
+    return true;
+}
+
 bool Installer::DeployUE4SSFiles(const fs::path& extractedRoot) const {
     std::error_code ec;
 
     const fs::path moviesDst = contentDir_ / "Content" / "Movies";
     const fs::path win64Dst  = contentDir_ / "Binaries" / "Win64";
 
-    // 1) Интро
+    // 1) Интро: сохраняем оригинал один раз, ставим новое.
     const fs::path introSrc  = extractedRoot / "Movies" / "HumbleIntro_PW.mp4";
     const fs::path introDst  = moviesDst / "HumbleIntro_PW.mp4";
     const fs::path introOrig = moviesDst / "HumbleIntro_PW.mp4.pwru-orig";
@@ -502,7 +464,6 @@ bool Installer::DeployUE4SSFiles(const fs::path& extractedRoot) const {
                      utils::Status::Error);
         return false;
     }
-
     if (!fs::is_directory(moviesDst, ec)) {
         utils::Print("Не найдена папка Movies: " + moviesDst.string(),
                      utils::Status::Error);
@@ -521,17 +482,9 @@ bool Installer::DeployUE4SSFiles(const fs::path& extractedRoot) const {
                      utils::Status::Info);
     }
 
-    fs::copy_file(introSrc, introDst,
-                  fs::copy_options::overwrite_existing, ec);
-    if (ec) {
-        utils::Print("Не удалось установить интро: " + ec.message(),
-                     utils::Status::Error);
-        return false;
-    }
-    utils::Print("Интро установлено: " + introDst.string(),
-                 utils::Status::Success);
+    if (!CopyFileOrLog(introSrc, introDst, "интро")) return false;
 
-    // 2) Win64
+    // 2) Win64: три обязательных файла.
     const fs::path win64Src = extractedRoot / "Win64";
     if (!fs::is_directory(win64Src, ec)) {
         utils::Print("В архиве отсутствует папка Win64",
@@ -539,29 +492,13 @@ bool Installer::DeployUE4SSFiles(const fs::path& extractedRoot) const {
         return false;
     }
 
-    for (const char* name : {"dwmapi.dll",
-                             "UE4SS.dll",
-                             "UE4SS-settings.ini"}) {
-        fs::path src = win64Src / name;
-        fs::path dst = win64Dst / name;
-        if (!fs::is_regular_file(src, ec)) {
-            utils::Print(std::string("В архиве отсутствует Win64/") + name,
-                         utils::Status::Error);
+    for (const char* name : {"dwmapi.dll", "UE4SS.dll", "UE4SS-settings.ini"}) {
+        if (!CopyFileOrLog(win64Src / name, win64Dst / name, name)) {
             return false;
         }
-        fs::copy_file(src, dst,
-                      fs::copy_options::overwrite_existing, ec);
-        if (ec) {
-            utils::Print(std::string("Не удалось установить ") + name +
-                             ": " + ec.message(),
-                         utils::Status::Error);
-            return false;
-        }
-        utils::Print(std::string("Установлен ") + name,
-                     utils::Status::Success);
     }
 
-    // 3) Mods/
+    // 3) Mods/: копируем целиком.
     const fs::path modsSrc = win64Src / "Mods";
     const fs::path modsDst = win64Dst / "Mods";
     if (!fs::is_directory(modsSrc, ec)) {
@@ -591,8 +528,7 @@ bool Installer::DeployUE4SSFiles(const fs::path& extractedRoot) const {
 }
 
 bool Installer::DownloadAndInstallUE4SS() const {
-    utils::Print("Скачивание UE4SS с GitHub...",
-                 utils::Status::Info);
+    utils::Print("Скачивание UE4SS с GitHub...", utils::Status::Info);
 
     const fs::path tmpRoot = contentDir_ / ".pwru_tmp";
     const fs::path zipPath = tmpRoot / "PW_RU_UE4SS.zip";
@@ -607,41 +543,70 @@ bool Installer::DownloadAndInstallUE4SS() const {
         return false;
     }
 
-    const std::string url =
-        std::string(kGithubReleaseBase) + "PW_RU_UE4SS.zip";
+    // RAII-очистка временной папки при любом выходе.
+    struct TmpCleanup {
+        fs::path path;
+        ~TmpCleanup() { std::error_code ignore; fs::remove_all(path, ignore); }
+    } cleanup{tmpRoot};
 
-    if (!DownloadFile(url, zipPath, "UE4SS")) {
+    if (!DownloadFile(std::string(kGithubReleaseBase) + "PW_RU_UE4SS.zip",
+                      zipPath, "UE4SS")) {
         utils::Print("Не удалось скачать архив UE4SS.",
                      utils::Status::Error);
-        fs::remove_all(tmpRoot, ec);
         return false;
     }
 
     if (!ExtractZip(zipPath, unzDir)) {
         utils::Print("Не удалось распаковать архив UE4SS.",
                      utils::Status::Error);
-        fs::remove_all(tmpRoot, ec);
         return false;
     }
 
     if (!DeployUE4SSFiles(unzDir)) {
         utils::Print("Не удалось установить компоненты UE4SS.",
                      utils::Status::Error);
-        fs::remove_all(tmpRoot, ec);
         return false;
     }
 
-    fs::remove_all(tmpRoot, ec);
     utils::Print("UE4SS и интро успешно установлены.",
                  utils::Status::Success);
     return true;
 }
 
+// ---------------------------------------------------------------
+// Патч локализации
+// ---------------------------------------------------------------
+
+// Заменяет "en-US" -> "ru-RU" в UTF-16LE. Возвращает true, если что-то заменено.
+bool Installer::ReplaceLanguageInBuffer(std::vector<char>& buffer) {
+    const char target[]      = {'e', 0, 'n', 0, '-', 0, 'U', 0, 'S', 0};
+    const char replacement[] = {'r', 0, 'u', 0, '-', 0, 'R', 0, 'U', 0};
+
+    constexpr std::size_t kTargetLen      = sizeof(target);
+    constexpr std::size_t kReplacementLen = sizeof(replacement);
+    static_assert(kTargetLen == kReplacementLen,
+                  "Замена должна быть той же длины, что и искомая строка");
+
+    bool found = false;
+    auto it = buffer.begin();
+    while ((it = std::search(it, buffer.end(),
+                             std::begin(target), std::end(target)))
+           != buffer.end()) {
+        found = true;
+        if (std::distance(it, buffer.end()) <
+            static_cast<std::ptrdiff_t>(kReplacementLen)) {
+            throw std::runtime_error(
+                "Недостаточно места для замены языка.");
+        }
+        std::copy(std::begin(replacement), std::end(replacement), it);
+        std::advance(it, kReplacementLen);
+    }
+    return found;
+}
 
 bool Installer::ApplyLanguageFix() const {
     utils::Print("Применение исправления языка...", utils::Status::Info);
 
-    // 1. Находим исполняемый файл игры
     const fs::path exePath = contentDir_ / "Binaries" / "Win64" /
                              "ProjectWingman-Win64-Shipping.exe";
     if (!fs::exists(exePath)) {
@@ -650,7 +615,6 @@ bool Installer::ApplyLanguageFix() const {
         return false;
     }
 
-    // 2. Создаем резервную копию
     const fs::path backupPath = exePath.string() + ".bak-pwlang";
     std::error_code ec;
     if (!fs::exists(backupPath, ec)) {
@@ -666,7 +630,6 @@ bool Installer::ApplyLanguageFix() const {
                      utils::Status::Success);
     }
 
-    // 3. Читаем файл в память
     std::ifstream inFile(exePath, std::ios::binary);
     if (!inFile) {
         utils::Print("Не удалось открыть файл для чтения: " + exePath.string(),
@@ -683,36 +646,12 @@ bool Installer::ApplyLanguageFix() const {
         return false;
     }
 
-    // 4. Ищем и заменяем "en-US" -> "ru-RU" в UTF-16LE
-    //    Каждый символ занимает 2 байта (младший байт, затем 0x00).
-    const char target[]      = {'e', 0, 'n', 0, '-', 0, 'U', 0, 'S', 0};
-    const char replacement[] = {'r', 0, 'u', 0, '-', 0, 'R', 0, 'U', 0};
-
-    constexpr std::size_t kTargetLen      = sizeof(target);
-    constexpr std::size_t kReplacementLen = sizeof(replacement);
-    static_assert(kTargetLen == kReplacementLen,
-                  "Замена должна быть той же длины, что и искомая строка");
-
     bool found = false;
-
-    auto it = buffer.begin();
-    while (true) {
-        it = std::search(it, buffer.end(),
-                         std::begin(target), std::end(target));
-        if (it == buffer.end()) break;
-
-        found = true;
-
-        // Проверяем, что запись не выйдет за пределы буфера
-        if (std::distance(it, buffer.end()) <
-            static_cast<std::ptrdiff_t>(kReplacementLen)) {
-            utils::Print("Ошибка: недостаточно места для замены языка.",
-                         utils::Status::Error);
-            return false;
-        }
-
-        std::copy(std::begin(replacement), std::end(replacement), it);
-        std::advance(it, kReplacementLen);
+    try {
+        found = ReplaceLanguageInBuffer(buffer);
+    } catch (const std::exception& e) {
+        utils::Print(e.what(), utils::Status::Error);
+        return false;
     }
 
     if (!found) {
@@ -721,11 +660,9 @@ bool Installer::ApplyLanguageFix() const {
             "Возможно, исправление уже применено или версия игры "
             "не поддерживается.",
             utils::Status::Warning);
-        // Не считаем это ошибкой — возможно, фикс уже применён
-        return true;
+        return true; // Не ошибка — возможно, фикс уже применён.
     }
 
-    // 5. Записываем изменённый файл обратно
     std::ofstream outFile(exePath, std::ios::binary | std::ios::trunc);
     if (!outFile) {
         utils::Print("Не удалось открыть файл для записи: " + exePath.string(),
@@ -735,7 +672,6 @@ bool Installer::ApplyLanguageFix() const {
     outFile.write(buffer.data(),
                   static_cast<std::streamsize>(buffer.size()));
     outFile.close();
-
     if (!outFile) {
         utils::Print("Ошибка при записи измененного файла.",
                      utils::Status::Error);

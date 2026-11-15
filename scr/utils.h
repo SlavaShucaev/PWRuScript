@@ -2,13 +2,40 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 #include <fstream>
+#include <filesystem>
 #include <dirent.h>
 #include <cstring>
 #include <cctype>
 #include <algorithm>
 
 namespace utils {
+
+/*=== ASCII-арт ===*/
+inline void PrintSideBySide(const std::vector<std::string>& artLines,
+                            const std::vector<std::string>& textLines,
+                            std::size_t gap = 4) {
+    // Ширина арта = максимальная длина строки.
+    std::size_t artWidth = 0;
+    for (const auto& line : artLines) {
+        artWidth = std::max(artWidth, line.size());
+    }
+
+    const std::size_t totalLines =
+        std::max(artLines.size(), textLines.size());
+
+    for (std::size_t i = 0; i < totalLines; ++i) {
+        const std::string& art  = i < artLines.size()  ? artLines[i]  : std::string{};
+        const std::string& text = i < textLines.size() ? textLines[i] : std::string{};
+
+        std::cout << art;
+        if (art.size() < artWidth) {
+            std::cout << std::string(artWidth - art.size(), ' ');
+        }
+        std::cout << std::string(gap, ' ') << text << '\n';
+    }
+}
 
 /*===Проверка, запущен ли игра===*/
 
@@ -85,6 +112,31 @@ inline void Print(const std::string& message, Status messageStatus) {
         }
     }
     (*out) << '\n';
+}
+
+/*===Работа с файловой системой===*/
+
+// Обёртка для единообразной обработки ошибок ФС.
+inline bool CheckPath(const std::filesystem::path& path,
+                      bool expectDirectory,
+                      const std::string& description) {
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec) && !ec;
+    const bool correctType = expectDirectory
+        ? std::filesystem::is_directory(path, ec)
+        : std::filesystem::is_regular_file(path, ec);
+
+    if (!exists || ec || !correctType) return false;
+
+    Print("Найден уже установленный " + description + ":\n" + path.string(),
+          Status::Warning);
+    return true;
+}
+
+// Удаляет файл, игнорируя ошибки (для временных файлов).
+inline void RemoveQuietly(const std::filesystem::path& path) {
+    std::error_code ignore;
+    std::filesystem::remove(path, ignore);
 }
 
 /*===Подтверждение действия (Да/Нет)===*/

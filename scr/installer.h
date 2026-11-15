@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 class UserCancelled : public std::runtime_error {
 public:
@@ -23,13 +24,8 @@ public:
     void InstallVoice() const;
     void InstallSubtitles() const;
 
-    // Скачивает PW_RU_Voice.pak и PW_RU_Subs.pak и ставит их в ~mods/
     bool DownloadAndInstallAll() const;
-
-    // Скачивает PW_RU_UE4SS.zip, распаковывает и ставит UE4SS + интро
     bool DownloadAndInstallUE4SS() const;
-    
-    // Установка патча локализации
     bool ApplyLanguageFix() const;
 
 private:
@@ -38,8 +34,9 @@ private:
         const std::filesystem::path& destinationName
         ) const;
 
-    bool CheckFile(const std::filesystem::path& p) const;
-    bool CheckDirectory(const std::filesystem::path& p) const;
+    // Скачивает pak из GitHub и кладёт в ~mods/ с перезаписью.
+    bool DownloadPakToMods(const std::string& fileName,
+                           const std::string& label) const;
 
     bool DownloadFile(const std::string& url,
                       const std::filesystem::path& destFile,
@@ -48,7 +45,15 @@ private:
     bool ExtractZip(const std::filesystem::path& zipPath,
                     const std::filesystem::path& destDir) const;
 
+    // Копирует файл с overwrite и логирует ошибку.
+    bool CopyFileOrLog(const std::filesystem::path& src,
+                       const std::filesystem::path& dst,
+                       const std::string& description) const;
+
     bool DeployUE4SSFiles(const std::filesystem::path& extractedRoot) const;
+
+    // Применяет фикс языка к буферу; возвращает true, если что-то заменено.
+    static bool ReplaceLanguageInBuffer(std::vector<char>& buffer);
 
     std::filesystem::path contentDir_;
     std::filesystem::path voicePak_;
