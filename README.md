@@ -3,6 +3,7 @@
 Скрипт установщик русской локализации от VGS Studio : озвучка, субтитры и интерфейс. Скрипт ставить в пару нажатий.
 
 **Поддерживаемые устройства :**  любые Linux-дистрибутивы
+
 **Оригинальный лаунчер :** [PWRuLauncher](https://github.com/RikudoSmpai/PWRuLauncher/tree/main)  
 
 ![Скриншот](shots/pwru_script_message.png)
@@ -51,4 +52,5 @@ cmake --build .
 
 ---
 Материалы локализации принадлежать : [VGS Studio](https://t.me/VGSPLF "Ссылка на Телеграм канал VGS Studio")
+
 [Project Wingman](https://store.steampowered.com/app/895870/Project_Wingman/ "Страница игры в Steam") и связанные с ним материалы принадлежат : Sector D2 
