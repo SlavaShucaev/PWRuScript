@@ -14,6 +14,9 @@ public:
     static bool IsValidDirectory(const std::string& targetDir);
     static bool IsValidFile(const std::string& targetFile);
 
+    // Найденные папки Steam (обычный, Flatpak, Snap): там же userdata с настройками запуска.
+    std::vector<std::filesystem::path> SteamRoots() const { return CandidateSteamPaths(); }
+
 private:
     std::vector<std::filesystem::path> CandidateSteamPaths() const;
     std::vector<std::filesystem::path> ReadSteamLibraries(
