@@ -8,6 +8,20 @@
 
 ![Скриншот](shots/pwru_script_message.png)
 
+## Как поставить
+
+Нужны библиотеки libcurl и libarchive: на SteamOS (Steam Deck), Arch, Fedora и Ubuntu они обычно уже есть.
+На Steam Deck — в режиме рабочего стола, в Konsole:
+
+```bash
+curl -L -o pwru_script https://github.com/SlavaShucaev/PWRuScript/releases/latest/download/pwru_script
+chmod +x pwru_script
+./pwru_script
+```
+
+Скрипт сам найдёт игру, скачает и проверит файлы перевода и подскажет про параметр запуска
+(см. ниже «Linux и Steam Deck: параметр запуска Proton»).
+
 ## Цель проекта
 
 Создать удобный способ установки русской локализации Project Wingman от VGS Studio на устроствах под управлением Linux-дистрибутивов
