@@ -31,3 +31,13 @@ target_link_libraries(pwru_script PRIVATE
     Threads::Threads
     ${PWRU_ARCHIVE_LIB}
 )
+
+# Тесты чистой логики (суммы, параметр запуска Proton, старая правка exe): без сети и файлов игры.
+#   cmake -DPWRU_BUILD_TESTS=ON .. && cmake --build . && ctest --output-on-failure
+option(PWRU_BUILD_TESTS "Собрать тесты логики (pwru_tests)" OFF)
+if(PWRU_BUILD_TESTS)
+    enable_testing()
+    add_executable(pwru_tests tests/test_logic.cpp)
+    target_include_directories(pwru_tests PRIVATE scr)
+    add_test(NAME pwru_tests COMMAND pwru_tests)
+endif()

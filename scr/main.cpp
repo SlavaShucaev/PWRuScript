@@ -106,6 +106,8 @@ int main() {
         return 1;
     }
 
+    installer.LoadChecksums();
+
     if (!installer.DownloadAndInstallAll()) {
         utils::Print("Установка не завершена из-за ошибок.",
                      utils::Status::Error);
@@ -118,13 +120,19 @@ int main() {
         return 1;
     }
 
-    // Фикс языка не критичен: сообщаем, но установку не прерываем.
-    if (!installer.ApplyLanguageFix()) {
-        utils::Print("Не удалось применить исправление языка.",
-                     utils::Status::Error);
-    }
+    // Старые версии скрипта меняли exe игры (en-US -> ru-RU); это больше не нужно —
+    // язык держит UE4SS. Вернуть оригинал не критично: при неудаче только подсказка.
+    installer.RestoreOriginalExe();
+
+    // Под Proton UE4SS грузится только с WINEDLLOVERRIDES="dwmapi=n,b".
+    const bool launchOptionsOk = installer.SetupLaunchOptions(locator.SteamRoots());
 
     utils::Print("Все компоненты успешно установлены.",
                  utils::Status::Success);
+    if (!launchOptionsOk) {
+        utils::Print("Осталось вписать параметр запуска в Steam (см. выше) —\n"
+                     "без него язык будет сбрасываться на английский.",
+                     utils::Status::Warning);
+    }
     return 0;
 }

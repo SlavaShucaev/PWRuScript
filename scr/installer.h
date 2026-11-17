@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -24,9 +25,24 @@ public:
     void InstallVoice() const;
     void InstallSubtitles() const;
 
+    // Суммы модов из релиза (PW_RU_mods.sha256). Нет файла сумм (релизы до 1.0.6) —
+    // проверка скачанного пропускается с предупреждением.
+    void LoadChecksums();
+
     bool DownloadAndInstallAll() const;
     bool DownloadAndInstallUE4SS() const;
-    bool ApplyLanguageFix() const;
+
+    // Старые версии скрипта меняли exe игры (en-US -> ru-RU). Если exe отличается от
+    // резервной копии ровно этой заменой — возвращаем оригинал. false — exe не тронут
+    // из-за ошибки или потому что игру с тех пор обновляли.
+    bool RestoreOriginalExe() const;
+
+    // Параметр запуска для Proton WINEDLLOVERRIDES="dwmapi=n,b": проверяет его в
+    // localconfig.vdf найденных Steam; при закрытом Steam предлагает вписать.
+    // true — параметр уже стоит или вписан.
+    bool SetupLaunchOptions(const std::vector<std::filesystem::path>& steamRoots) const;
+
+    static void PrintLaunchOptionsHelp();
 
 private:
     void InstallPak(
@@ -40,7 +56,12 @@ private:
 
     bool DownloadFile(const std::string& url,
                       const std::filesystem::path& destFile,
-                      const std::string& label) const;
+                      const std::string& label,
+                      bool quiet = false) const;
+
+    // Сверяет файл с суммой из релиза; при несовпадении удаляет его.
+    bool VerifyChecksum(const std::filesystem::path& file,
+                        const std::string& assetName) const;
 
     bool ExtractZip(const std::filesystem::path& zipPath,
                     const std::filesystem::path& destDir) const;
@@ -52,10 +73,8 @@ private:
 
     bool DeployUE4SSFiles(const std::filesystem::path& extractedRoot) const;
 
-    // Применяет фикс языка к буферу; возвращает true, если что-то заменено.
-    static bool ReplaceLanguageInBuffer(std::vector<char>& buffer);
-
     std::filesystem::path contentDir_;
     std::filesystem::path voicePak_;
     std::filesystem::path subtitlePak_;
+    std::map<std::string, std::string> sums_;   // имя ассета -> sha256
 };

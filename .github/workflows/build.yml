@@ -1,0 +1,38 @@
+# Сборка и тесты на каждый пуш и PR. Сборка на Ubuntu 22.04 (glibc 2.35): бинарник запускается
+# и на более новых системах, включая SteamOS на Steam Deck. Нужны libcurl и libarchive в системе.
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Зависимости
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libcurl4-openssl-dev libarchive-dev
+
+      - name: Сборка
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPWRU_BUILD_TESTS=ON
+          cmake --build build -j
+
+      - name: Тесты
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Запуск без игры
+        # Без папки Steam и с пустым вводом скрипт должен аккуратно отменить установку.
+        run: |
+          set +e
+          HOME="$(mktemp -d)" timeout 30 ./build/pwru_script < /dev/null
+          code=$?
+          echo "exit code: $code"
+          test "$code" -eq 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pwru_script-linux-x86_64
+          path: build/pwru_script
