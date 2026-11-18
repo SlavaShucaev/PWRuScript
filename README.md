@@ -14,13 +14,25 @@
 На Steam Deck — в режиме рабочего стола, в Konsole:
 
 ```bash
+# Скачать скрипт
 curl -L -o pwru_script https://github.com/SlavaShucaev/PWRuScript/releases/latest/download/pwru_script
+# Выдать скрипту права на исполнение
 chmod +x pwru_script
+# Запустить скрипт
 ./pwru_script
 ```
 
 Скрипт сам найдёт игру, скачает и проверит файлы перевода и подскажет про параметр запуска
 (см. ниже «Linux и Steam Deck: параметр запуска Proton»).
+
+## Как удалить мод
+
+Скрипт сам удалить все компоненты локализации.
+Откройте Konsole `Ctrl + Alt + T` и вставте следующию команду :
+```bash
+./pwru_script --uninstall
+```
+Когда скрипт удалит локализацию, закройте Konsole.
 
 ## Цель проекта
 
@@ -75,11 +87,6 @@ Steam (`userdata/<id>/config/localconfig.vdf`, рядом сохранит ко�
   Project Wingman → ⚙ → Свойства → Параметры запуска (или в режиме рабочего стола, закрыв Steam перед
   запуском скрипта: Steam → Выход).
 
-Exe игры скрипт не меняет. Ранние версии меняли в нём `en-US` на `ru-RU` и оставляли копию
-`ProjectWingman-Win64-Shipping.exe.bak-pwlang`: теперь скрипт сам вернёт оригинал, если exe отличается
-от копии только этой правкой. Если игру с тех пор обновляли, exe не тронет и подскажет проверить
-целостность файлов в Steam.
-
 ## Проверка файлов
 
 Озвучка, субтитры и UE4SS скачиваются из последнего релиза
@@ -101,6 +108,5 @@ Exe игры скрипт не меняет. Ранние версии меня�
 Пишите в [Issue](https://github.com/SlavaShucaev/PWRuScript/issues), если столкнётесь с проблемами при работе скрипта.
 
 ---
-Материалы локализации принадлежать : [VGS Studio](https://t.me/VGSPLF "Ссылка на Телеграм канал VGS Studio")
-
+Материалы локализации принадлежать : [VGS Studio](https://t.me/VGSPLF "Ссылка на Телеграм канал VGS Studio")  
 [Project Wingman](https://store.steampowered.com/app/895870/Project_Wingman/ "Страница игры в Steam") и связанные с ним материалы принадлежат : Sector D2 

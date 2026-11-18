@@ -16,13 +16,13 @@ static int g_failures = 0;
 static int g_checks = 0;
 
 #define CHECK(cond)                                                                   \
-    do {                                                                              \
+do {                                                                              \
         ++g_checks;                                                                   \
         if (!(cond)) {                                                                \
             std::cerr << "FAIL " << __FILE__ << ":" << __LINE__ << ": " #cond "\n";   \
             ++g_failures;                                                             \
-        }                                                                             \
-    } while (0)
+    }                                                                             \
+} while (0)
 
 #define CHECK_EQ(a, b)                                                                \
     do {                                                                              \
@@ -31,19 +31,19 @@ static int g_checks = 0;
         const auto vb = (b);                                                          \
         if (!(va == vb)) {                                                            \
             std::cerr << "FAIL " << __FILE__ << ":" << __LINE__ << ": " #a " == " #b  \
-                      << "\n  got:      " << va << "\n  expected: " << vb << "\n";    \
+            << "\n  got:      " << va << "\n  expected: " << vb << "\n";    \
             ++g_failures;                                                             \
-        }                                                                             \
-    } while (0)
+    }                                                                             \
+} while (0)
 
-static std::string Replace(std::string s, const std::string& from, const std::string& to) {
-    std::size_t pos = 0;
-    while ((pos = s.find(from, pos)) != std::string::npos) {
-        s.replace(pos, from.size(), to);
-        pos += to.size();
+    static std::string Replace(std::string s, const std::string& from, const std::string& to) {
+        std::size_t pos = 0;
+        while ((pos = s.find(from, pos)) != std::string::npos) {
+            s.replace(pos, from.size(), to);
+            pos += to.size();
+        }
+        return s;
     }
-    return s;
-}
 
 static std::size_t Count(const std::string& s, const std::string& what) {
     std::size_t n = 0, pos = 0;
@@ -118,6 +118,41 @@ static void TestOverride() {
                             "WINEDLLOVERRIDES=d3d11=n,b %command%", "mangohud %command% -windowed"}) {
         CHECK(proton::HasOverride(proton::MergeOptions(opt)));
     }
+}
+
+// Очистка параметров запуска: RemoveOverride убирает только dwmapi, сохраняя всё остальное.
+static void TestRemoveOverride() {
+    // Только dwmapi -> пусто (и %command% тоже уходит).
+    CHECK_EQ(proton::RemoveOverride("WINEDLLOVERRIDES=\"dwmapi=n,b\" %command%"),
+             std::string(""));
+    // dwmapi и чужие параметры без %command% — чужие сохраняются.
+    CHECK_EQ(proton::RemoveOverride("WINEDLLOVERRIDES=\"dwmapi=n,b\" -novid"),
+             std::string("-novid"));
+    CHECK_EQ(proton::RemoveOverride("WINEDLLOVERRIDES=dwmapi=n,b -dx11"),
+             std::string("-dx11"));
+    // Другие оверрайды остаются.
+    CHECK_EQ(proton::RemoveOverride("WINEDLLOVERRIDES=\"dwmapi=n,b;xinput=disabled\" %command%"),
+             std::string("WINEDLLOVERRIDES=\"xinput=disabled\" %command%"));
+    // dwmapi в общем списке dll убирается, остальные — на месте.
+    CHECK_EQ(proton::RemoveOverride("WINEDLLOVERRIDES=\"dwmapi,xinput=n,b\" %command%"),
+             std::string("WINEDLLOVERRIDES=\"xinput=n,b\" %command%"));
+    // Без dwmapi строка не меняется.
+    CHECK_EQ(proton::RemoveOverride("WINEDLLOVERRIDES=\"xinput=n,b\" %command%"),
+             std::string("WINEDLLOVERRIDES=\"xinput=n,b\" %command%"));
+    // Только %command% без dwmapi — чистится.
+    CHECK_EQ(proton::RemoveOverride("%command%"), std::string(""));
+    // Только параметры без dwmapi и без %command% — не трогаем.
+    CHECK_EQ(proton::RemoveOverride("-dx11"), std::string("-dx11"));
+    // Пустая строка — без изменений.
+    CHECK_EQ(proton::RemoveOverride(""), std::string(""));
+    // dwmapi=b (не native) — это не наш параметр, не трогаем.
+    CHECK_EQ(proton::RemoveOverride("WINEDLLOVERRIDES=\"dwmapi=b\" %command%"),
+             std::string("WINEDLLOVERRIDES=\"dwmapi=b\" %command%"));
+    // После очистки HasOverride не срабатывает.
+    CHECK(!proton::HasOverride(proton::RemoveOverride("WINEDLLOVERRIDES=\"dwmapi=n,b\" gamemoderun %command%")));
+    // Идемпотентность: повторная очистка ничего не меняет.
+    const std::string once = proton::RemoveOverride("WINEDLLOVERRIDES=\"dwmapi=n,b;d3d11=n\" mangohud %command%");
+    CHECK_EQ(proton::RemoveOverride(once), once);
 }
 
 static const char* kVdf =
@@ -205,6 +240,81 @@ static void TestVdf() {
     CHECK(proton::FindApp(vdf4).appFound);
 }
 
+// WithoutOverride применяет очистку к тексту localconfig.vdf.
+static void TestVdfRemove() {
+    const std::string vdf = kVdf;
+    const std::string other440 = proton::FindApp(vdf, "440").options;
+
+    // У приложения нет LaunchOptions — файл не меняется.
+    const auto same = proton::WithoutOverride(vdf);
+    CHECK(same.has_value() && *same == vdf);
+
+    // Блока игры нет — nullopt.
+    CHECK(!proton::WithoutOverride("\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t}\n}\n").has_value());
+    CHECK(!proton::WithoutOverride("").has_value());
+
+    // Вписали параметр, затем убрали — вернулись к исходному тексту.
+    const auto withOpt = proton::WithOverride(vdf);
+    CHECK(withOpt.has_value());
+    if (withOpt) {
+        const auto cleaned = proton::WithoutOverride(*withOpt);
+        CHECK(cleaned.has_value());
+        if (cleaned) {
+            const auto app = proton::FindApp(*cleaned);
+            CHECK(app.appFound);
+            CHECK(!app.hasOptions);                       // строка LaunchOptions удалена
+            CHECK(!proton::HasOverride(app.options));
+            CHECK(*cleaned == vdf);                       // файл вернулся к исходному виду
+        }
+    }
+
+    // Параметр вместе с чужими опциями: dwmapi уходит, чужие остаются.
+    const std::string vdf2 = Replace(vdf, "\"LastPlayed\"\t\t\"1731700000\"",
+                                     "\"LaunchOptions\"\t\t\"WINEDLLOVERRIDES=\\\"dwmapi=n,b\\\" gamemoderun %command%\"");
+    const auto cleaned2 = proton::WithoutOverride(vdf2);
+    CHECK(cleaned2.has_value());
+    if (cleaned2) {
+        const auto app = proton::FindApp(*cleaned2);
+        CHECK(app.hasOptions);
+        CHECK(!proton::HasOverride(app.options));
+        CHECK_EQ(app.options, std::string("gamemoderun %command%"));
+        CHECK_EQ(proton::FindApp(*cleaned2, "440").options, other440);
+    }
+
+    // Только dwmapi: строка LaunchOptions удаляется целиком.
+    // Строим vdf3 через WithOverride, чтобы отступ и \n совпали с теми, что удаляет
+    // WithoutOverride; затем подменяем значение на «только dwmapi».
+    {
+        const auto built = proton::WithOverride(vdf);
+        CHECK(built.has_value());
+        if (built) {
+            const std::string vdf3 = Replace(*built,
+                                             "WINEDLLOVERRIDES=\\\"dwmapi=n,b\\\" %command%",
+                                             "WINEDLLOVERRIDES=\\\"dwmapi=n,b\\\" %command%");
+            // Значение уже «только dwmapi», WithoutOverride должен вернуть исходный vdf.
+            const auto cleaned3 = proton::WithoutOverride(vdf3);
+            CHECK(cleaned3.has_value());
+            if (cleaned3) {
+                const auto app = proton::FindApp(*cleaned3);
+                CHECK(!app.hasOptions);
+                CHECK(!proton::HasOverride(app.options));
+                CHECK(*cleaned3 == vdf);
+            }
+        }
+    }
+
+    // Идемпотентность: второй проход ничего не меняет.
+    const std::string once = proton::RemoveOverride("WINEDLLOVERRIDES=\"dwmapi=n,b;d3d11=n\" mangohud %command%");
+    const std::string vdf4 = Replace(vdf, "\"LastPlayed\"\t\t\"1731700000\"",
+                                     "\"LaunchOptions\"\t\t\"" + once + "\"");
+    const auto c1 = proton::WithoutOverride(vdf4);
+    CHECK(c1.has_value());
+    if (c1) {
+        const auto c2 = proton::WithoutOverride(*c1);
+        CHECK(c2.has_value() && *c2 == *c1);
+    }
+}
+
 static std::vector<char> Utf16(const std::string& ascii) {
     std::vector<char> out;
     for (char ch : ascii) { out.push_back(ch); out.push_back(0); }
@@ -240,7 +350,9 @@ int main() {
     TestSha256();
     TestParseSums();
     TestOverride();
+    TestRemoveOverride();
     TestVdf();
+    TestVdfRemove();
     TestLangPatch();
     if (g_failures) {
         std::cerr << g_failures << " of " << g_checks << " checks FAILED\n";

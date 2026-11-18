@@ -324,7 +324,7 @@ void Installer::LoadChecksums() {
     if (sums_.empty()) {
         utils::Print(
             "В релизе нет файла контрольных сумм (" + std::string(kSumsAsset) + ").\n"
-            "Проверка скачанных файлов будет пропущена.",
+                                                                                "Проверка скачанных файлов будет пропущена.",
             utils::Status::Warning);
     } else {
         utils::Print("Контрольные суммы релиза получены: файлов " +
@@ -353,9 +353,9 @@ bool Installer::VerifyChecksum(const fs::path& file,
 
     utils::Print(
         "Контрольная сумма не совпала: " + assetName + "\n"
-        "ожидалась: " + it->second + "\n"
-        "получена:  " + (actual.empty() ? std::string("(файл не прочитан)") : actual) + "\n"
-        "Файл повреждён при загрузке — запустите установку ещё раз.",
+                                                       "ожидалась: " + it->second + "\n"
+                           "получена:  " + (actual.empty() ? std::string("(файл не прочитан)") : actual) + "\n"
+                                                                              "Файл повреждён при загрузке — запустите установку ещё раз.",
         utils::Status::Error);
     utils::RemoveQuietly(file);
     return false;
@@ -705,7 +705,7 @@ bool Installer::RestoreOriginalExe() const {
 
     utils::Print(
         "Найдена копия exe от прошлой версии скрипта (" + backupPath.filename().string() + ").\n"
-        "Править exe игры больше не нужно: русский язык держит UE4SS.",
+                                                                                           "Править exe игры больше не нужно: русский язык держит UE4SS.",
         utils::Status::Info);
 
     const std::vector<char> original = ReadAllBytes(backupPath);
@@ -755,9 +755,9 @@ void Installer::PrintLaunchOptionsHelp() {
         "и титров локализации. Впишите один раз:\n"
         "\n"
         "    " + std::string(proton::kLaunchLine) + "\n"
-        "\n"
-        "Steam: Библиотека → Project Wingman → Свойства → Общие → Параметры запуска.\n"
-        "Steam Deck (игровой режим): Project Wingman → ⚙ → Свойства → Параметры запуска.",
+                                                 "\n"
+                                                 "Steam: Библиотека → Project Wingman → Свойства → Общие → Параметры запуска.\n"
+                                                 "Steam Deck (игровой режим): Project Wingman → ⚙ → Свойства → Параметры запуска.",
         utils::Status::Warning);
 }
 
@@ -852,5 +852,177 @@ bool Installer::SetupLaunchOptions(const std::vector<fs::path>& steamRoots) cons
     }
 
     if (!allOk) PrintLaunchOptionsHelp();
+    return allOk;
+}
+
+// ---------------------------------------------------------------
+// Удаление компонентов мода
+// ---------------------------------------------------------------
+
+bool Installer::RemoveFileIfExists(const fs::path& file,
+                                   const std::string& description) const {
+    std::error_code ec;
+    if (!fs::exists(file, ec)) {
+        utils::Print("Не найден " + description + " — пропускаю.",
+                     utils::Status::Info);
+        return true;
+    }
+    fs::remove(file, ec);
+    if (ec) {
+        utils::Print("Не удалось удалить " + description + ": " +
+                         ec.message(),
+                     utils::Status::Error);
+        return false;
+    }
+    utils::Print("Удалён " + description, utils::Status::Success);
+    return true;
+}
+
+bool Installer::RemoveDirIfExists(const fs::path& dir,
+                                  const std::string& description) const {
+    std::error_code ec;
+    if (!fs::exists(dir, ec)) {
+        utils::Print("Не найдена " + description + " — пропускаю.",
+                     utils::Status::Info);
+        return true;
+    }
+    fs::remove_all(dir, ec);
+    if (ec) {
+        utils::Print("Не удалось удалить " + description + ": " +
+                         ec.message(),
+                     utils::Status::Error);
+        return false;
+    }
+    utils::Print("Удалена " + description, utils::Status::Success);
+    return true;
+}
+
+bool Installer::RemoveModFiles() const {
+    bool ok = true;
+
+    // 1) Модовые pak-файлы. Остальное в ~mods/ не трогаем.
+    const fs::path paksMods = contentDir_ / "Content" / "Paks" / "~mods";
+    ok &= RemoveFileIfExists(paksMods / "PW_RU_Voice.pak", "файл озвучки");
+    ok &= RemoveFileIfExists(paksMods / "PW_RU_Subs.pak", "файл субтитров");
+
+    // 2) Файлы UE4SS. UE4SS.dll не упомянут в задании — не трогаем.
+    const fs::path binWin64 = contentDir_ / "Binaries" / "Win64";
+    ok &= RemoveFileIfExists(binWin64 / "dwmapi.dll", "dwmapi.dll");
+    ok &= RemoveFileIfExists(binWin64 / "UE4SS-settings.ini", "UE4SS-settings.ini");
+    ok &= RemoveDirIfExists(binWin64 / "Mods", "папка Mods");
+    ok &= RemoveFileIfExists(binWin64 / "UE4SS.log", "UE4SS.log");
+    ok &= RemoveFileIfExists(binWin64 / "UE4SS.prev.log", "UE4SS.prev.log");
+
+    // 3) Оригинальное интро: удаляем модовое и возвращаем сохранённый оригинал.
+    const fs::path moviesDir = contentDir_ / "Content" / "Movies";
+    const fs::path introDst  = moviesDir / "HumbleIntro_PW.mp4";
+    const fs::path introOrig = moviesDir / "HumbleIntro_PW.mp4.pwru-orig";
+
+    std::error_code ec;
+    if (fs::exists(introOrig, ec)) {
+        if (!RemoveFileIfExists(introDst, "модовое интро")) {
+            ok = false;
+        } else {
+            fs::rename(introOrig, introDst, ec);
+            if (ec) {
+                utils::Print("Не удалось вернуть оригинальное интро: " +
+                                 ec.message(),
+                             utils::Status::Error);
+                ok = false;
+            } else {
+                utils::Print("Оригинальное интро восстановлено.",
+                             utils::Status::Success);
+            }
+        }
+    } else {
+        utils::Print("Резервная копия интро не найдена — интро не трогаю.",
+                     utils::Status::Info);
+    }
+
+    return ok;
+}
+
+// ---------------------------------------------------------------
+// Удаление параметра запуска для Proton
+// ---------------------------------------------------------------
+
+bool Installer::RemoveLaunchOptions(const std::vector<fs::path>& steamRoots) const {
+    // localconfig.vdf всех учёток Steam: <Steam>/userdata/<id>/config/localconfig.vdf
+    std::vector<fs::path> configs;
+    std::vector<std::string> seen;
+    for (const auto& root : steamRoots) {
+        std::error_code ec;
+        const fs::path userdata = root / "userdata";
+        if (!fs::is_directory(userdata, ec)) continue;
+        for (const auto& entry : fs::directory_iterator(userdata, ec)) {
+            const fs::path cfg = entry.path() / "config" / "localconfig.vdf";
+            std::error_code fec;
+            if (!fs::is_regular_file(cfg, fec)) continue;
+            const std::string key = fs::weakly_canonical(cfg, fec).string();
+            if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+            seen.push_back(key);
+            configs.push_back(cfg);
+        }
+    }
+
+    if (configs.empty()) {
+        utils::Print("Настройки Steam не найдены — параметр запуска не изменён.",
+                     utils::Status::Warning);
+        return false;
+    }
+
+    if (utils::IsProcessRunning("steam")) {
+        utils::Print(
+            "Steam сейчас запущен: убрать параметр запуска сам не могу —\n"
+            "Steam перезапишет настройки при выходе.\n"
+            "Удалите вручную: Свойства → Общие → Параметры запуска:\n"
+            "    " + std::string(proton::kLaunchLine),
+            utils::Status::Warning);
+        return false;
+    }
+
+    bool changed = false;
+    bool allOk = true;
+    for (const auto& cfg : configs) {
+        const std::string text = ReadAllText(cfg);
+        const auto updated = proton::WithoutOverride(text);
+        if (!updated) continue;
+        if (*updated == text) continue;              // нечего менять
+
+        const fs::path backup = cfg.string() + ".bak-pwru";
+        std::error_code ec;
+        if (!fs::exists(backup, ec)) {
+            fs::copy_file(cfg, backup, ec);
+            if (ec) {
+                utils::Print("Не удалось сохранить копию " + cfg.string() + " — файл не тронут.",
+                             utils::Status::Error);
+                allOk = false;
+                continue;
+            }
+        }
+        if (!WriteAtomically(cfg, updated->data(), updated->size())) {
+            utils::Print("Не удалось записать " + cfg.string(), utils::Status::Error);
+            allOk = false;
+            continue;
+        }
+
+        const proton::AppOptions check = proton::FindApp(ReadAllText(cfg));
+        const bool clean = !check.hasOptions || !proton::HasOverride(check.options);
+        if (clean) {
+            utils::Print("Параметр запуска убран: " + cfg.string() +
+                             "\n(копия прежних настроек: " + backup.filename().string() + ")",
+                         utils::Status::Success);
+            changed = true;
+        } else {
+            utils::Print("После записи параметр всё ещё найден: " + cfg.string(),
+                         utils::Status::Error);
+            allOk = false;
+        }
+    }
+
+    if (!changed && allOk) {
+        utils::Print("Параметр запуска dwmapi=n,b не найден — чистить нечего.",
+                     utils::Status::Info);
+    }
     return allOk;
 }

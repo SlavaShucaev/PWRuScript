@@ -42,6 +42,14 @@ public:
     // true — параметр уже стоит или вписан.
     bool SetupLaunchOptions(const std::vector<std::filesystem::path>& steamRoots) const;
 
+    // Удаляет компоненты мода: pak-файлы из ~mods, файлы UE4SS из Binaries/Win64,
+    // возвращает оригинальное интро. Чужие файлы не трогает.
+    bool RemoveModFiles() const;
+
+    // Убирает dwmapi=n,b из параметров запуска во всех localconfig.vdf найденных Steam.
+    // Steam должен быть закрыт. Прочие параметры игрока сохраняются.
+    bool RemoveLaunchOptions(const std::vector<std::filesystem::path>& steamRoots) const;
+
     static void PrintLaunchOptionsHelp();
 
 private:
@@ -72,6 +80,14 @@ private:
                        const std::string& description) const;
 
     bool DeployUE4SSFiles(const std::filesystem::path& extractedRoot) const;
+
+    // Удаляет файл, если он есть; false — только при ошибке удаления.
+    bool RemoveFileIfExists(const std::filesystem::path& file,
+                            const std::string& description) const;
+
+    // Удаляет папку целиком, если она есть; false — только при ошибке удаления.
+    bool RemoveDirIfExists(const std::filesystem::path& dir,
+                           const std::string& description) const;
 
     std::filesystem::path contentDir_;
     std::filesystem::path voicePak_;
