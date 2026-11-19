@@ -905,9 +905,10 @@ bool Installer::RemoveModFiles() const {
     ok &= RemoveFileIfExists(paksMods / "PW_RU_Voice.pak", "файл озвучки");
     ok &= RemoveFileIfExists(paksMods / "PW_RU_Subs.pak", "файл субтитров");
 
-    // 2) Файлы UE4SS. UE4SS.dll не упомянут в задании — не трогаем.
+    // 2) Файлы UE4SS: dwmapi.dll, UE4SS.dll, настройки, папка Mods и логи.
     const fs::path binWin64 = contentDir_ / "Binaries" / "Win64";
     ok &= RemoveFileIfExists(binWin64 / "dwmapi.dll", "dwmapi.dll");
+    ok &= RemoveFileIfExists(binWin64 / "UE4SS.dll", "UE4SS.dll");
     ok &= RemoveFileIfExists(binWin64 / "UE4SS-settings.ini", "UE4SS-settings.ini");
     ok &= RemoveDirIfExists(binWin64 / "Mods", "папка Mods");
     ok &= RemoveFileIfExists(binWin64 / "UE4SS.log", "UE4SS.log");
@@ -968,7 +969,24 @@ bool Installer::RemoveLaunchOptions(const std::vector<fs::path>& steamRoots) con
     if (configs.empty()) {
         utils::Print("Настройки Steam не найдены — параметр запуска не изменён.",
                      utils::Status::Warning);
-        return false;
+        return true;                                  // чистить нечего — не ошибка
+    }
+
+    // Сначала выясняем, есть ли вообще параметр. Если его нигде нет, Steam может
+    // быть запущен — это уже не наша забота: чистить нечего, и мы не мешаем.
+    std::vector<fs::path> needFix;
+    for (const auto& cfg : configs) {
+        const proton::AppOptions app = proton::FindApp(ReadAllText(cfg));
+        if (!app.appFound) continue;
+        if (app.hasOptions && proton::HasOverride(app.options)) {
+            needFix.push_back(cfg);
+        }
+    }
+
+    if (needFix.empty()) {
+        utils::Print("Параметр запуска dwmapi=n,b не найден — чистить нечего.",
+                     utils::Status::Info);
+        return true;
     }
 
     if (utils::IsProcessRunning("steam")) {
@@ -981,9 +999,8 @@ bool Installer::RemoveLaunchOptions(const std::vector<fs::path>& steamRoots) con
         return false;
     }
 
-    bool changed = false;
     bool allOk = true;
-    for (const auto& cfg : configs) {
+    for (const auto& cfg : needFix) {
         const std::string text = ReadAllText(cfg);
         const auto updated = proton::WithoutOverride(text);
         if (!updated) continue;
@@ -1012,7 +1029,6 @@ bool Installer::RemoveLaunchOptions(const std::vector<fs::path>& steamRoots) con
             utils::Print("Параметр запуска убран: " + cfg.string() +
                              "\n(копия прежних настроек: " + backup.filename().string() + ")",
                          utils::Status::Success);
-            changed = true;
         } else {
             utils::Print("После записи параметр всё ещё найден: " + cfg.string(),
                          utils::Status::Error);
@@ -1020,9 +1036,5 @@ bool Installer::RemoveLaunchOptions(const std::vector<fs::path>& steamRoots) con
         }
     }
 
-    if (!changed && allOk) {
-        utils::Print("Параметр запуска dwmapi=n,b не найден — чистить нечего.",
-                     utils::Status::Info);
-    }
     return allOk;
 }

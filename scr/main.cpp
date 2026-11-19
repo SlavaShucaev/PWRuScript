@@ -42,6 +42,19 @@ static const std::vector<std::string> kAsciiArt = {
     R"(                         -             )",
 };
 
+// Список цитат, которые будут выводится случайно
+static const std::vector<std::string> kQuotes = {
+    "«The missile knows where it is at all times.»",
+    "«Dance with angel»",
+    "«Yo, buddy. Still alive?»",
+    "«It's time to dive into fireworks!»",
+    "«It’s my birthday today. A victory sure would be nice»",
+    "«Three Strikes»",
+    "«The real heroes always manage to die first.»",
+    "«So, you`ve decided to become a jet fighter pilot.»"
+};
+
+
 static const std::vector<std::string> kIntroText = {
     "Скрипт утановщик русской локализации Project Wingman",
     "Локализацией занималсь:              VGS Studio",
@@ -50,7 +63,7 @@ static const std::vector<std::string> kIntroText = {
     "----------------------------------------------------",
     "Скоро начнётся установка ...",
     "----------------------------------------------------",
-    "«The missile knows where it is at all times.»",
+    utils::PickRandom(kQuotes),
 };
 
 fs::path LocateGame(){
@@ -211,6 +224,7 @@ int UninstallAll() {
     utils::Print("Игра сейчас не запущена.", utils::Status::Success);
 
     bool allOk = true;
+    bool exeRestored = true;
     try {
         Installer installer(gamePath / "ProjectWingman",
                             "PW_RU_Voice.pak",
@@ -218,12 +232,24 @@ int UninstallAll() {
 
         allOk = installer.RemoveModFiles();
 
+        // Старые версии скрипта правили exe игры (en-US -> ru-RU). При удалении
+        // возвращаем оригинал, чтобы папка игры была «как из Steam». Если не
+        // удалось (игру обновляли, нет копии) — не критично, но скажем.
+        exeRestored = installer.RestoreOriginalExe();
+
         Locator locator;
         allOk = installer.RemoveLaunchOptions(locator.SteamRoots()) && allOk;
     } catch (const std::exception& e) {
         utils::Print(std::string("Ошибка удаления: ") + e.what(),
                      utils::Status::Error);
         return 1;
+    }
+
+    if (!exeRestored) {
+        utils::Print(
+            "exe игры не удалось вернуть к оригиналу — см. сообщение выше.\n"
+            "Файл игры остался изменённым (правка языка от старого скрипта).",
+            utils::Status::Warning);
     }
 
     if (!allOk) {
@@ -252,14 +278,13 @@ int main(int argc, char* argv[]) {
     } else if (argc == 2) {
         std::string arg = argv[1];
 
-        if (arg == "--uninstall" || arg == "-u") {
+        if (arg == "--uninstall") {
             result = UninstallAll();
-        } else if (arg == "--help" || arg =="-h") {
+        } else if (arg == "--help") {
             utils::Print("Доступные команды:\n"
-                         "Скрипт может принять только один аргумент\n"
                          "  без аргументов — установка локализации\n"
-                         "  --uninstall или -u   — удаление локализации, её настроек и самого скрипта\n"
-                         "  --help или -h         — эта справка");
+                         "  --uninstall    — удаление локализации, её настроек и самого скрипта\n"
+                         "  --help         — эта справка");
         } else {
             utils::Print("Неизвестный аргумент: " + arg + "\n"
                                                           "Введите ./pwru_script --help \n"

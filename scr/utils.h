@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cctype>
 #include <algorithm>
+#include <random>
 
 namespace utils {
 
@@ -35,6 +36,19 @@ inline void PrintSideBySide(const std::vector<std::string>& artLines,
         }
         std::cout << std::string(gap, ' ') << text << '\n';
     }
+}
+
+/*===Вывод случайной цитаты===*/
+
+template <typename T>
+inline const T& PickRandom(const std::vector<T>& items) {
+    static thread_local std::mt19937 rng(std::random_device{}());
+    if (items.empty()) {
+        static const T empty{};
+        return empty;
+    }
+    std::uniform_int_distribution<std::size_t> dist(0, items.size() - 1);
+    return items[dist(rng)];
 }
 
 /*===Проверка, запущен ли игра===*/
