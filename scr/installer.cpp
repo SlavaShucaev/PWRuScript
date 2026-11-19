@@ -921,7 +921,7 @@ bool Installer::RemoveModFiles() const {
 
     std::error_code ec;
     if (fs::exists(introOrig, ec)) {
-        if (!RemoveFileIfExists(introDst, "модовое интро")) {
+        if (!RemoveFileIfExists(introDst, " интро VGS")) {
             ok = false;
         } else {
             fs::rename(introOrig, introDst, ec);

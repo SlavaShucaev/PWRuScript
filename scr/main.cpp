@@ -281,10 +281,12 @@ int main(int argc, char* argv[]) {
         if (arg == "--uninstall") {
             result = UninstallAll();
         } else if (arg == "--help") {
-            utils::Print("Доступные команды:\n"
+            utils::Print("Скрипт принимает только один аргумент.\n"
+                         "Доступные команды:\n"
                          "  без аргументов — установка локализации\n"
                          "  --uninstall    — удаление локализации, её настроек и самого скрипта\n"
-                         "  --help         — эта справка");
+                         "  --help         — эта справка",
+                         utils::Status::Info);
         } else {
             utils::Print("Неизвестный аргумент: " + arg + "\n"
                                                           "Введите ./pwru_script --help \n"
